@@ -1,0 +1,9 @@
+{
+  "local_llm": {
+    "enabled": true,
+    "endpoint": "http://localhost:11434",
+    "model": "llama3.2:3b",
+    "timeout": 45
+  },
+  "fallback_to_cloud": true
+}

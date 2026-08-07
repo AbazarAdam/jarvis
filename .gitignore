@@ -1,0 +1,25 @@
+﻿# Virtual environment
+.venv/
+
+# API keys – NEVER commit these
+config/api_keys.json
+
+# Logs
+logs/
+*.log
+
+# Ollama / Vosk models (large binary files)
+ollama_local/
+vosk_model/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
