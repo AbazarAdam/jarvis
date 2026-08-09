@@ -16,14 +16,10 @@ from memory.memory_manager import (
 )
 
 from actions.file_processor import file_processor
-from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import screen_process
-from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
@@ -31,8 +27,6 @@ from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
-
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -131,30 +125,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "weather_report",
-        "description": "Gives the weather report to user",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "city": {"type": "STRING", "description": "City name"}
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
-            },
-            "required": ["receiver", "message_text", "platform"]
-        }
-    },
-    {
         "name": "reminder",
         "description": "Sets a timed reminder using Windows Task Scheduler.",
         "parameters": {
@@ -165,24 +135,6 @@ TOOL_DECLARATIONS = [
                 "message": {"type": "STRING", "description": "Reminder message text"}
             },
             "required": ["date", "time", "message"]
-        }
-    },
-    {
-        "name": "youtube_video",
-        "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
-            },
-            "required": []
         }
     },
     {
@@ -371,46 +323,6 @@ TOOL_DECLARATIONS = [
                 "path":        {"type": "STRING",  "description": "Save path for screenshot"},
             },
             "required": ["action"]
-        }
-    },
-    {
-        "name": "game_updater",
-        "description": (
-            "THE ONLY tool for ANY Steam or Epic Games request. "
-            "Use for: installing, downloading, updating games, listing installed games, "
-            "checking download status, scheduling updates. "
-            "ALWAYS call directly for any Steam/Epic/game request. "
-            "NEVER use agent_task, browser_control, or web_search for Steam/Epic."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":    {"type": "STRING",  "description": "update | install | list | download_status | schedule | cancel_schedule | schedule_status (default: update)"},
-                "platform":  {"type": "STRING",  "description": "steam | epic | both (default: both)"},
-                "game_name": {"type": "STRING",  "description": "Game name (partial match supported)"},
-                "app_id":    {"type": "STRING",  "description": "Steam AppID for install (optional)"},
-                "hour":      {"type": "INTEGER", "description": "Hour for scheduled update 0-23 (default: 3)"},
-                "minute":    {"type": "INTEGER", "description": "Minute for scheduled update 0-59 (default: 0)"},
-                "shutdown_when_done": {"type": "BOOLEAN", "description": "Shut down PC when download finishes"},
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "flight_finder",
-        "description": "Searches Google Flights and speaks the best options.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
-            },
-            "required": ["origin", "destination", "date"]
         }
     },
     {
@@ -670,19 +582,6 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 
-            elif name == "weather_report":
-                # Internet check for weather tool
-                try:
-                    func = globals().get('weather_action')
-                    if getattr(func, 'requires_internet', False) and self.llm and not self.llm.is_online():
-                        self.speak("I need an internet connection to get the weather.")
-                        result = "Requires internet"
-                        raise RuntimeError("offline")
-                except RuntimeError:
-                    pass
-
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
 
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
@@ -692,26 +591,11 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
                 result = r or "Done."
 
-            elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
-
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
 
-            elif name == "youtube_video":
-                try:
-                    func = globals().get('youtube_video')
-                    if getattr(func, 'requires_internet', False) and self.llm and not self.llm.is_online():
-                        self.speak("I need an internet connection to access YouTube.")
-                        result = "Requires internet"
-                        raise RuntimeError("offline")
-                except RuntimeError:
-                    pass
 
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -799,22 +683,7 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
-            elif name == "game_updater":
-                r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
 
-            elif name == "flight_finder":
-                try:
-                    func = globals().get('flight_finder')
-                    if getattr(func, 'requires_internet', False) and self.llm and not self.llm.is_online():
-                        self.speak("I need an internet connection to search for flights.")
-                        result = "Requires internet"
-                        raise RuntimeError("offline")
-                except RuntimeError:
-                    pass
-
-                r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")

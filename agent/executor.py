@@ -185,9 +185,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
     elif tool == "web_search":
         from actions.web_search import web_search
         return web_search(parameters=parameters, player=None) or "Done."
-    elif tool == "game_updater":
-        from actions.game_updater import game_updater
-        return game_updater(parameters=parameters, player=None, speak=speak) or "Done."
+    
     elif tool == "browser_control":
         from actions.browser_control import browser_control
         return browser_control(parameters=parameters, player=None) or "Done."
@@ -213,21 +211,10 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         screen_process(parameters=parameters, player=None)
         return "Screen captured and analyzed."
 
-    elif tool == "send_message":
-        from actions.send_message import send_message
-        return send_message(parameters=parameters, player=None) or "Done."
-
     elif tool == "reminder":
         from actions.reminder import reminder
         return reminder(parameters=parameters, player=None) or "Done."
 
-    elif tool == "youtube_video":
-        from actions.youtube_video import youtube_video
-        return youtube_video(parameters=parameters, player=None) or "Done."
-
-    elif tool == "weather_report":
-        from actions.weather_report import weather_action
-        return weather_action(parameters=parameters, player=None) or "Done."
 
     elif tool == "computer_settings":
         from actions.computer_settings import computer_settings
@@ -247,9 +234,6 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
             raise ValueError("generated_code requires a 'description' parameter.")
         return _run_generated_code(description, speak=speak)
 
-    elif tool == "flight_finder":
-        from actions.flight_finder import flight_finder
-        return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
 
     elif tool == "file_processor":
         from actions.file_processor import file_processor as _file_processor
