@@ -1,3 +1,4 @@
+import ui
 import asyncio
 import base64
 import io
@@ -319,6 +320,11 @@ def screen_process(
         print("[ScreenProcess] ⚠️ No user_text provided.")
         return False
 
+    # Support both "mode" and "angle" for clarity; "mode" takes precedence
+    angle = (parameters or {}).get("angle", "screen")
+    mode  = (parameters or {}).get("mode", angle)
+    angle = mode.lower().strip()
+
     angle = (parameters or {}).get("angle", "screen").lower().strip()
     print(f"[ScreenProcess] angle={angle!r}  text={user_text!r}")
 
@@ -329,6 +335,16 @@ def screen_process(
             image_bytes = _capture_camera()
             mime_type   = "image/jpeg"
             print("[ScreenProcess] 📷 Camera captured")
+            # Show preview popup for camera
+            # Show camera preview – use the global MainWindow reference
+            if ui._main_window_instance:
+                try:
+                    ui._main_window_instance.show_camera_preview(image_bytes)
+                    print("[ScreenProcess] 📷 Preview sent to UI")
+                except Exception as e:
+                    print(f"[ScreenProcess] ⚠️ Preview error: {e}")
+            else:
+                print("[ScreenProcess] ⚠️ No MainWindow instance available for preview")
         else:
             image_bytes = _capture_screenshot()
             mime_type   = "image/jpeg" if _PIL_OK else "image/png"

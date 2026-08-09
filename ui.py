@@ -26,8 +26,10 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
-    QVBoxLayout, QWidget, QProgressBar,
+    QVBoxLayout, QWidget, QDialog, QProgressBar,
 )
+
+_main_window_instance: 'MainWindow' | None = None
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -1045,6 +1047,7 @@ class SetupOverlay(QWidget):
 
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
+    _camera_preview_signal = pyqtSignal(bytes)
     _state_sig = pyqtSignal(str)
     _setup_sig = pyqtSignal(str, int)
 
@@ -1107,6 +1110,15 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
         self.setCentralWidget(central)
+        # Camera preview label (top‑level child of MainWindow, hidden by default)
+        self._cam_preview = QLabel(self)
+        self._cam_preview.hide()
+        self._cam_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cam_preview.setStyleSheet(
+            f"background: {C.BG}; border: 3px solid {C.ACC}; border-radius: 6px;"
+        )
+        self._cam_preview.setFixedSize(400, 300)
+        self._cam_preview.setWindowFlags(Qt.WindowType.ToolTip)
 
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1143,6 +1155,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self._camera_preview_signal.connect(self._show_camera_preview_dialog)
         self._setup_sig.connect(self._update_setup_progress)
 
         self._overlay: SetupOverlay | None = None
@@ -1160,6 +1173,37 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.showFullScreen()
+
+        # Make the MainWindow instance globally accessible for the camera preview
+        import ui
+        ui._main_window_instance = self
+
+    def show_camera_preview(self, image_bytes: bytes):
+        """Emit a signal so the dialog is created on the main thread."""
+        self._camera_preview_signal.emit(image_bytes)
+
+    def _show_camera_preview_dialog(self, image_bytes: bytes):
+        """Show the camera preview as a floating overlay."""
+        try:
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+            if pixmap.isNull():
+                print("[UI] ⚠️ Camera preview: invalid image data")
+                return
+
+            self._cam_preview.setPixmap(
+                pixmap.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            )
+            # Centre on the main window
+            self._cam_preview.move(
+                self.geometry().center() - self._cam_preview.rect().center()
+            )
+            self._cam_preview.show()
+            self._cam_preview.raise_()
+            QTimer.singleShot(4000, self._cam_preview.hide)
+            print("[UI] 📷 Camera preview displayed")
+        except Exception as e:
+            print(f"[UI] ⚠️ Camera preview error: {e}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1627,6 +1671,7 @@ class JarvisUI:
         self._win = MainWindow(face_path)
         self._win.show()
         self.root = _RootShim(self._app)
+
 
     @property
     def interrupt_flag(self) -> threading.Event:
