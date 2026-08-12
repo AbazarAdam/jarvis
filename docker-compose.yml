@@ -1,0 +1,6 @@
+version: "3.8"
+
+services:
+  jarvis-test:
+    build: .
+    command: pytest -q tests/
