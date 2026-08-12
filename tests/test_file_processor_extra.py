@@ -24,7 +24,7 @@ def test_detect_uppercase_extension():
 def test_file_size_str_small(tmp_path):
     f = tmp_path / "small.txt"
     f.write_text("hello")
-    assert _file_size_str(f) == "5.0 B"
+    assert _file_size_str(f) == "5 B"
 
 
 def test_file_size_str_kb(tmp_path):

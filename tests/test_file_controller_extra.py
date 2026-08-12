@@ -28,3 +28,15 @@ def test_get_desktop():
 
 def test_get_downloads():
     assert _get_downloads() == Path.home() / "Downloads"
+
+
+def test_format_size_half_kb():
+    assert _format_size(512) == "512.0 B"
+
+
+def test_format_size_one_mb():
+    assert _format_size(1024 * 1024) == "1.0 MB"
+
+
+def test_format_size_three_gb():
+    assert _format_size(3 * 1024 ** 3) == "3.0 GB"
