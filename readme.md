@@ -7,7 +7,6 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-yellow)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
 
-
 ---
 
 ## 🧠 Architecture Overview
@@ -21,7 +20,6 @@ flowchart TB
 
     subgraph Core
         LIVE[Gemini Live Session]
-        OFFLINE[Offline Mode<br/>Vosk + Ollama]
         AGENT[Agent Executor<br/>Planner & Error Recovery]
     end
 
@@ -30,12 +28,12 @@ flowchart TB
         BROWSER[Browser Control<br/>Playwright]
         FILES[File Controller<br/>CRUD, Search, Organize]
         PROCESSOR[File Processor<br/>Convert, Resize, Summarize]
+        VISION[Screen & Camera Vision]
+        RECON[Cyber Recon<br/>OSINT + Nmap + Nikto]
+        BRIEF[Morning Brief]
         SEARCH[Web Search]
         REMINDERS[Reminders]
-        MESSAGES[Messaging]
-        YT[YouTube]
-        FLIGHTS[Flight Finder]
-        GAMES[Game Updater]
+        PLUGINS[Plugin System]
     end
 
     subgraph Output
@@ -46,18 +44,37 @@ flowchart TB
     MIC --> LIVE
     TXT --> LIVE
     LIVE --> AGENT
-    OFFLINE --> AGENT
-    AGENT --> TOOLS
-    TOOLS --> AUDIO
-    TOOLS --> UI
+    AGENT --> SETTINGS
+    AGENT --> BROWSER
+    AGENT --> FILES
+    AGENT --> PROCESSOR
+    AGENT --> VISION
+    AGENT --> RECON
+    AGENT --> BRIEF
+    AGENT --> SEARCH
+    AGENT --> REMINDERS
+    AGENT --> PLUGINS
+    SETTINGS --> AUDIO
+    BROWSER --> AUDIO
+    FILES --> AUDIO
+    PROCESSOR --> AUDIO
+    VISION --> AUDIO
+    RECON --> AUDIO
+    BRIEF --> AUDIO
+    SEARCH --> AUDIO
+    REMINDERS --> AUDIO
+    PLUGINS --> AUDIO
+    SETTINGS --> UI
+    BROWSER --> UI
+    FILES --> UI
+    PROCESSOR --> UI
+    VISION --> UI
+    RECON --> UI
+    BRIEF --> UI
+    SEARCH --> UI
+    REMINDERS --> UI
+    PLUGINS --> UI
 ```
-
-JARVIS runs in two modes:
-
-* **Online** — ultra-low-latency voice conversation via Google Gemini Live, with automatic tool calling.
-* **Offline** — local speech recognition (Vosk) + local LLM (Ollama) for tasks that do not require the internet.
-
-The agent executor uses an LLM-powered planner to break complex goals into tool steps, with built-in error recovery and retry logic.
 
 ---
 
@@ -65,35 +82,35 @@ The agent executor uses an LLM-powered planner to break complex goals into tool 
 
 ### 🖥️ System Control
 
-* **Volume** — set precise levels using `nircmd`.
-* **Brightness** — adjust via WMI (laptops only).
-* **Window Management** — minimize, maximize, or close any app by its title.
-* **Lock / Restart / Shutdown** — direct Windows API calls.
-* **Screenshots** — capture full screen and save to your Desktop.
+* **Volume** – precise levels via `nircmd.exe`
+* **Brightness** – WMI-based, works on laptops
+* **Window Management** – minimize, maximize, close any app by title
+* **Lock / Restart / Shutdown** – direct Windows API calls
+* **Screenshots** – capture full screen and save to Desktop
 
 ### 🌐 Browser Automation (Playwright)
 
-* Open any website in your default browser.
-* Search Google, Bing, or DuckDuckGo.
-* Manage tabs: **new, switch, close, list**.
-* Scroll by pixel, full page, or to specific elements.
-* Fill forms, click elements, and extract page text.
+* Open any website in your default browser
+* Search Google, Bing, or DuckDuckGo
+* Manage tabs: new, switch, close, list
+* Scroll by pixel, full page, or to specific elements
+* Fill forms, click elements, extract page text, reload
 
 ### 📁 File Operations
 
-* Create, read, write, move, copy, rename, delete files.
-* **Organize Desktop** by file type.
-* **Search** by name or extension.
-* **Disk usage** and large-file scanner.
+* Create, read, write, move, copy, rename, delete files
+* Organize Desktop by file type
+* Search by name or extension
+* Disk usage and large-file scanner
 
 ### 🔄 File Processing
 
-* Convert **TXT → PDF** (pure Python, no Word required).
-* Convert **DOCX → PDF** (requires Microsoft Word).
-* Resize, compress, and convert images (PNG, JPG, WebP, BMP, TIFF).
-* Summarize PDFs, Word docs, and text files using Gemini.
-* Transcribe audio and video files.
-* Analyze CSV / Excel datasets.
+* Convert TXT → PDF (pure Python, no Word required)
+* Convert DOCX → PDF (requires Microsoft Word)
+* Resize, compress, and convert images (PNG, JPG, WebP, BMP, TIFF)
+* Summarize PDFs, Word docs, and text files using Gemini
+* Transcribe audio and video files
+* Analyze CSV / Excel datasets
 
 ### 🧩 Multi-Step Agent
 
@@ -101,19 +118,45 @@ Give JARVIS a complex goal, for example:
 
 > “Research the health benefits of green tea and save a summary to my desktop.”
 
-The planner automatically breaks it into steps: **web search → collect results → write file**.
-
-Error recovery and automatic replanning keep tasks robust.
+The planner automatically breaks it into steps: **web search → collect results → write file** with error recovery and automatic replanning.
 
 ### 🧠 Long-Term Memory
 
-* JARVIS remembers facts about you (identity, preferences, projects) across sessions.
-* Stored in `memory/long_term.json`.
+JARVIS remembers facts about you (identity, preferences, projects) across sessions in `memory/long_term.json`.
 
-### ⏹ Interrupt / Resume
+### 📷 Camera Vision & Streaming
 
-* A dedicated **STOP** button in the UI instantly halts speech and processing.
-* Click **RESUME** to continue — no reconnect loops and no dropped audio.
+* Single snapshot analysis (screen or webcam)
+* Continuous camera streaming with real-time observations
+* STOP button interrupts immediately
+
+### 🛡️ Cyber Recon & Pentest
+
+Unified cybersecurity tool that runs:
+
+* Subdomain enumeration (crt.sh)
+* Email harvesting & breach checking (Have I Been Pwned)
+* LinkedIn/employee discovery
+* Nmap port scanning with CVE vulnerability scripts
+* Nikto web vulnerability scanning
+* SSL/TLS certificate analysis
+* Generates a professional PDF report
+
+### 📡 Remote Dashboard
+
+* Password-protected web dashboard
+* Type or speak commands from any phone
+* QR code pairing
+* Force-kill ngrok on disconnect
+
+### ☀️ Morning Brief
+
+* Fetches cybersecurity news, AI/software engineering news, and unread emails
+* Speaks a concise summary and saves a full report to Desktop
+
+### 🧩 Plugin Architecture
+
+Drop Python plugins into `plugins/` and JARVIS auto-loads them at startup. No core code changes needed.
 
 ---
 
@@ -142,13 +185,14 @@ playwright install
 
 ### 4. Set up API keys
 
-Create `config/api_keys.json` with your [Gemini](https://aistudio.google.com/apikey) and [OpenRouter](https://openrouter.ai/) keys:
+Create `config/api_keys.json` with your Gemini and OpenRouter keys:
 
 ```json
 {
   "gemini_api_key": "AIza...",
   "openrouter_api_key": "sk-or-...",
-  "os_system": "windows"
+  "os_system": "windows",
+  "remote_password": "your-secret-password"
 }
 ```
 
@@ -162,28 +206,26 @@ python main.py
 
 ## 🔮 Roadmap (v1.1+)
 
-### 🛡️ Cybersecurity & Engineering Features
+### 🛡️ Cybersecurity & Engineering
 
-* [ ] **Sandboxed Code Execution** — run generated scripts in isolated containers.
-* [ ] **Encrypted Memory Store** — AES-256 encryption for `long_term.json`.
-* [ ] **Permission Manager** — confirm dangerous actions (shutdown, file deletions) with voice or GUI.
-* [ ] **Audit Log** — timestamped record of every tool invocation for forensic analysis.
-* [ ] **Voice-Activated Security Tools** — integrate Nmap, Wireshark, and Metasploit (read-only for safety).
-* [ ] **Automated Security Reports** — scan a network and generate a PDF report.
+* [ ] Nuclei / deeper CVE scanning
+* [ ] Encrypted memory store
+* [ ] Permission manager for dangerous actions
+* [ ] Automated audit log
+* [ ] Social engineering OSINT expansion
 
 ### 🤖 AI & Productivity
 
-* [ ] **Wake Word** — “Jarvis” always-listening mode.
-* [ ] **Conversation Context** — remember entire conversation history, not just facts.
-* [ ] **Proactive Assistance** — suggest actions based on time, idle state, or detected events.
-* [ ] **Multi-Language Support** — seamless translation of voice commands and tool outputs.
+* [ ] Wake word “Jarvis”
+* [ ] Conversation context memory (full history)
+* [ ] Proactive assistance
+* [ ] Dark/light mode
 
 ### 🔧 Engineering Excellence
 
-* [ ] **Unit Tests & CI/CD** — full test coverage for all action modules.
-* [ ] **Plugin Architecture** — add custom tools without modifying the core.
-* [ ] **Docker Deployment** — one-command setup on any platform.
-* [ ] **Remote Web Dashboard** — control JARVIS from your phone or tablet.
+* [ ] Docker deployment
+* [ ] Unit tests & CI/CD
+* [ ] More plugin examples
 
 ---
 
@@ -196,7 +238,7 @@ Cybersecurity Engineer & Software Engineer
 
 ## 📄 License
 
-Personal and non-commercial use only — [Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
+Personal and non-commercial use only – Creative Commons BY-NC 4.0
 
 ---
 

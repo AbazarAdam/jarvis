@@ -3,6 +3,7 @@ import threading
 import json
 import sys
 import traceback
+import importlib.util
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
@@ -38,6 +39,7 @@ def get_base_dir():
     return Path(__file__).resolve().parent
 
 
+
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
@@ -47,6 +49,55 @@ SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 
+PLUGIN_DIR = BASE_DIR / "plugins"
+PLUGIN_DECLARATIONS = []
+PLUGIN_FUNCTIONS = {}
+
+def load_plugins():
+    """Scan the plugins/ folder and register any valid plugins."""
+    global PLUGIN_DECLARATIONS, PLUGIN_FUNCTIONS
+
+    if not PLUGIN_DIR.exists():
+        PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
+        return
+
+    for file in PLUGIN_DIR.glob("*.py"):
+        if file.name.startswith("_"):
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location(
+                f"jarvis_plugin_{file.stem}", file
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            info = getattr(module, "PLUGIN_INFO", None)
+            if not info:
+                print(f"[Plugins] ⚠️ {file.name}: missing PLUGIN_INFO")
+                continue
+
+            name = info.get("name")
+            description = info.get("description")
+            parameters = info.get("parameters", {
+                "type": "OBJECT",
+                "properties": {},
+                "required": []
+            })
+            execute_fn = getattr(module, "execute", None) or getattr(module, "run", None)
+
+            if not name or not description or not callable(execute_fn):
+                print(f"[Plugins] ⚠️ {file.name}: invalid plugin")
+                continue
+
+            PLUGIN_DECLARATIONS.append({
+                "name": name,
+                "description": description,
+                "parameters": parameters
+            })
+            PLUGIN_FUNCTIONS[name] = execute_fn
+            print(f"[Plugins] ✅ Loaded: {name}")
+        except Exception as e:
+            print(f"[Plugins] ❌ Failed to load {file.name}: {e}")
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -607,7 +658,7 @@ class JarvisLive:
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS}],
+            tools=[{"function_declarations": TOOL_DECLARATIONS + PLUGIN_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -664,7 +715,15 @@ class JarvisLive:
         result = "Done."
 
         try:
-            if name == "open_app":
+            # Plugin dispatch
+            if name in PLUGIN_FUNCTIONS:
+                plugin_fn = PLUGIN_FUNCTIONS[name]
+                r = await self._run_cancellable(
+                    lambda: plugin_fn(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r if isinstance(r, str) else "Plugin executed."
+
+            elif name == "open_app":
                 r = await self._run_cancellable(lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 
@@ -1096,6 +1155,7 @@ def main():
 
         if online:
             ui.wait_for_api_key()
+        load_plugins()
         jarvis = JarvisLive(ui)
 
         # Now the global error handler can speak through Jarvis

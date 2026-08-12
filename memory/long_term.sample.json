@@ -1,0 +1,10 @@
+@"
+{
+  "identity": {},
+  "preferences": {},
+  "projects": {},
+  "relationships": {},
+  "wishes": {},
+  "notes": {}
+}
+"@ | Out-File -FilePath memory\long_term.sample.json -Encoding utf8

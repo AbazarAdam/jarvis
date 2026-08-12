@@ -1,15 +1,109 @@
-Local LLM (Ollama) — Automated Setup
+# J.A.R.V.I.S — Local LLM Setup
 
-Jarvis now automatically installs, configures, and starts a local Ollama service on first run.
+Optional local/offline AI configuration for JARVIS.
 
-- No manual steps required. On first launch Jarvis will:
-  1. Detect Ollama; if missing, download and install the appropriate package for your OS (may trigger a single elevation/UAC prompt on Windows).
-  2. Pull the configured model (default: `llama3.2:3b`) once.
-  3. Start the Ollama service and verify `http://localhost:11434` is responding.
+---
 
-- Behavior:
-  - First run: shows setup progress in the UI and performs one-time install/pull (may take a few minutes for the model).
-  - Subsequent runs: starts Ollama service quickly (no re-download / re-pull unless config changes).
-  - If installation or pull fails, Jarvis falls back to cloud LLMs automatically and logs the error to `logs/llm_errors.log`.
+## Prerequisites
 
-You can still adjust `config/llm_config.json` to change model or disable local LLM.
+* Windows 10/11
+* Python 3.11+
+* Ollama installed
+* A local model such as `llama3.1:8b` or `qwen2.5:7b`
+
+Install Ollama from:
+
+https://ollama.com/download
+
+---
+
+## Install a Model
+
+Open PowerShell and run:
+
+```powershell
+ollama pull llama3.1:8b
+```
+
+You can replace the model with any supported Ollama model.
+
+---
+
+## Configure JARVIS
+
+Edit `config/llm_config.json`:
+
+```json
+{
+  "provider": "ollama",
+  "model": "llama3.1:8b",
+  "base_url": "http://localhost:11434"
+}
+```
+
+---
+
+## Start Ollama
+
+```powershell
+ollama serve
+```
+
+Keep this terminal running.
+
+---
+
+## Launch JARVIS
+
+```powershell
+python main.py
+```
+
+JARVIS will use the local model when offline mode is enabled.
+
+---
+
+## Recommended Models
+
+| Model       | RAM      | Speed  | Quality   |
+| ----------- | -------- | ------ | --------- |
+| llama3.1:8b | 8–12 GB  | Fast   | Excellent |
+| qwen2.5:7b  | 8–10 GB  | Fast   | Excellent |
+| mistral:7b  | 8–10 GB  | Fast   | Very good |
+| gemma2:9b   | 10–14 GB | Medium | Excellent |
+
+---
+
+## Troubleshooting
+
+### Ollama not found
+
+Ensure `ollama` is in your PATH.
+
+### Connection refused
+
+Run:
+
+```powershell
+ollama serve
+```
+
+### Model not installed
+
+Run:
+
+```powershell
+ollama pull llama3.1:8b
+```
+
+---
+
+## Notes
+
+* Offline mode keeps conversations on your computer.
+* Performance depends on your CPU, GPU, and available RAM.
+* Voice recognition and text-to-speech remain local even when the LLM is local.
+
+---
+
+*Maintained for JARVIS v1.0 — August 2026.*

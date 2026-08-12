@@ -6,30 +6,35 @@
 
 ## ✅ Fully Working & Verified
 
-- **Voice conversation** – real‑time speech‑to‑speech via Gemini Live.
-- **Volume control** – precise levels set through `nircmd.exe`.
-- **Brightness control** – works on laptops via `screen_brightness_control` + WMI fallback.
-- **Window management** – minimize, maximize, close any visible window by its title.
-- **Lock screen** – instant lock using the native Windows API.
-- **Screenshots** – captured with `mss` and saved directly to the user’s Desktop.
-- **File operations** – create, read, write, move, copy, rename, delete, and search files.
-- **File conversion** – TXT → PDF (via `fpdf2`), DOCX → PDF (via `docx2pdf`).
-- **Multi‑step agent** – research a topic, collect results, and write a full report to disk.
-- **Browser control** – navigate, search, manage tabs (new, switch, close, list), scroll, reload, and extract text.
-- **Long‑form reading** – reads complete files aloud without truncation.
-- **Interrupt / Resume button** – dedicated ⏹ STOP button that instantly halts speech and processing; ▶ RESUME restores listening without reconnection.
-- **Persistent memory** – structured user profile saved in `memory/long_term.json`.
-- **System prompt & personality** – professional, concise, no “Thank you” loops, varied responses.
+* **Voice conversation** – real-time speech-to-speech via Gemini Live
+* **Volume control** – precise levels via `nircmd.exe`
+* **Brightness control** – works on laptops via WMI
+* **Window management** – minimize, maximize, close any visible window by title
+* **Lock screen** – native Windows API
+* **Screenshots** – saved directly to Desktop via `mss`
+* **File operations** – full CRUD, search, organize
+* **File conversion** – TXT → PDF, DOCX → PDF
+* **Image processing** – resize, compress, convert
+* **Multi-step agent** – research → file, with content injection
+* **Browser control** – full tab management, scrolling, form filling
+* **Long-form reading** – reads complete files aloud
+* **Interrupt / Resume** – global STOP button works for all tools, not just audio
+* **Camera vision** – single snapshots + continuous streaming
+* **Remote dashboard** – password-protected, phone-friendly, voice input
+* **Morning brief** – cybersecurity + AI news + unread emails
+* **Cyber recon** – OSINT, subdomains, Nmap, Nikto, SSL, PDF report
+* **Plugin architecture** – auto-loading `plugins/` folder
+* **Persistent memory** – `memory/long_term.json`
+* **System prompt & personality** – professional, no “Thank you” loops
 
 ---
 
-## ⚠️ Known Limitations (minor)
+## ⚠️ Known Limitations (Minor)
 
-- **UI text lag** – long responses still animate character‑by‑character (instant display planned).
-- **Offline mode** – less polished than online; lacks interrupt support and full tool parity.
-- **Planner fallback** – occasionally produces a sub‑optimal plan when the primary LLM is rate‑limited.
-- **Image resize / convert** – supported by `file_processor` but the model sometimes routes to `agent_task` instead; a stronger prompt rule can fix this.
-- **Long‑conversation keep‑alive** – heartbeat is active, but under extreme idle the session may still drop (rate limit).
+* **Offline/local LLM** – code exists but is not active in current builds
+* **Free-tier API limits** – Gemini/OpenRouter free tiers may rate-limit during heavy use
+* **UI text animation** – long messages still animate character-by-character
+* **Dark/light mode** – planned but not yet implemented
 
 ---
 
@@ -39,3 +44,8 @@
 python -m pip install -r requirements.txt
 python -m playwright install
 python main.py
+```
+
+---
+
+*The assistant is now a fully capable desktop automation partner with real cybersecurity reconnaissance capabilities.*

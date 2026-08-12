@@ -26,3 +26,6 @@ Thumbs.db
 # Gmail OAuth secrets
 config/gmail_credentials.json
 config/gmail_token.pickle
+
+# Real memory – do not commit
+memory/long_term.json
