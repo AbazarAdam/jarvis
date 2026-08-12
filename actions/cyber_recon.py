@@ -1,9 +1,9 @@
 """
-cyber_recon.py — JARVIS Unified Cyber Reconnaissance
-Runs subdomain enumeration, directory brute‑forcing, Nmap, Nikto, and SSL checks.
-Generates a single comprehensive PDF report.
+cyber_recon.py — JARVIS Unified Cyber Reconnaissance (OSINT + Exploit)
 """
 
+import re
+import json
 import requests
 import subprocess
 import shutil
@@ -14,7 +14,7 @@ from datetime import datetime
 
 
 # ---------------------------------------------------------------------------
-# Common sensitive directories (built‑in wordlist)
+# Common sensitive directories
 # ---------------------------------------------------------------------------
 _COMMON_DIRS = [
     "admin", "login", "wp-admin", "dashboard", "backup", "backups",
@@ -25,9 +25,15 @@ _COMMON_DIRS = [
     "backup.sql", "dump", "export", "private", "secret", "credentials",
 ]
 
+# Common emails to try
+_COMMON_EMAILS = [
+    "admin", "contact", "info", "support", "security",
+    "webmaster", "postmaster", "abuse", "hello", "sales",
+]
+
 
 # ---------------------------------------------------------------------------
-# Reusable helpers (copied from security_scanner.py for independence)
+# Tool helpers (unchanged)
 # ---------------------------------------------------------------------------
 def _find_tool(name):
     path = shutil.which(name)
@@ -53,9 +59,10 @@ def _run_nmap(target):
     if not nmap_exe:
         return {"error": "Nmap not found.", "raw": "", "hosts": []}
 
-    cmd = [nmap_exe, "-F", "-T4", "--host-timeout", "60s", target]
+    # Fast scan with vulnerability scripts
+    cmd = [nmap_exe, "-sV", "--script", "vuln", "-T4", "--host-timeout", "90s", target]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if proc.returncode == 0 and "Host is up" in proc.stdout:
             return {
                 "raw": proc.stdout,
@@ -64,9 +71,10 @@ def _run_nmap(target):
     except subprocess.TimeoutExpired:
         pass
 
-    cmd = [nmap_exe, "--top-ports", "20", "-T4", "--host-timeout", "45s", target]
+    # Fallback: top ports
+    cmd = [nmap_exe, "--top-ports", "100", "-T4", "--host-timeout", "60s", target]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         if proc.returncode == 0:
             return {
                 "raw": proc.stdout,
@@ -104,10 +112,8 @@ def _run_nikto(target):
     perl_exe = shutil.which("perl") or r"C:\Strawberry\perl\bin\perl.exe"
     if not Path(perl_exe).exists() or not nikto_pl:
         return ""
-
     if not target.startswith("http"):
         target = "https://" + target
-
     cmd = [perl_exe, nikto_pl, "-h", target, "-Tuning", "123", "-o", "-", "-ssl"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
@@ -152,10 +158,9 @@ def _check_ssl(target):
 
 
 # ---------------------------------------------------------------------------
-# Subdomain enumeration (crt.sh)
+# Subdomains (unchanged)
 # ---------------------------------------------------------------------------
 def _enumerate_subdomains(domain):
-    """Return up to 50 subdomains using crt.sh."""
     url = f"https://crt.sh/?q=%.{domain}&output=json"
     try:
         resp = requests.get(url, timeout=30)
@@ -175,10 +180,9 @@ def _enumerate_subdomains(domain):
 
 
 # ---------------------------------------------------------------------------
-# Directory brute‑forcing
+# Directory brute‑forcing (unchanged)
 # ---------------------------------------------------------------------------
 def _brute_force_dirs(target):
-    """Check common sensitive paths on the target."""
     if not target.startswith("http"):
         target = "https://" + target
     found = []
@@ -194,9 +198,103 @@ def _brute_force_dirs(target):
 
 
 # ---------------------------------------------------------------------------
-# PDF generation
+# NEW: OSINT – Email harvesting & breach check
 # ---------------------------------------------------------------------------
-def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ssl_info):
+def _harvest_emails(domain):
+    """Scrape the homepage for email addresses and guess common ones."""
+    emails = set()
+    # Try to get emails from the homepage
+    for scheme in ["https", "http"]:
+        try:
+            resp = requests.get(f"{scheme}://{domain}", timeout=10, headers={
+                "User-Agent": "Mozilla/5.0"
+            })
+            # Find email patterns
+            found = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", resp.text)
+            for e in found:
+                if e.endswith(domain):
+                    emails.add(e)
+            break
+        except Exception:
+            pass
+    # Also include common pattern guesses (not verified)
+    guesses = [f"{user}@{domain}" for user in _COMMON_EMAILS]
+    return sorted(emails), guesses
+
+
+def _check_pwned(email):
+    """Check an email address against haveibeenpwned.com (k-anonymity)."""
+    try:
+        # Use the API that returns breach names
+        url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}"
+        headers = {"hibp-api-key": ""}  # no key needed for this endpoint
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            return [b["Name"] for b in data]
+        elif resp.status_code == 404:
+            return []
+    except Exception:
+        pass
+    return []
+
+
+def _check_domain_breaches(domain):
+    """Check how many times the domain appears in breaches (generic search)."""
+    try:
+        # Use the domain search API (no key needed)
+        url = f"https://haveibeenpwned.com/api/v3/breaches?domain={domain}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            return len(data), [b["Name"] for b in data[:5]]
+    except Exception:
+        pass
+    return 0, []
+
+
+# ---------------------------------------------------------------------------
+# NEW: OSINT – Employee discovery via LinkedIn scraping
+# ---------------------------------------------------------------------------
+def _scrape_linkedin(domain):
+    """Find LinkedIn profile URLs on the target's website and extract names."""
+    profiles = []
+    for scheme in ["https", "http"]:
+        try:
+            resp = requests.get(f"{scheme}://{domain}", timeout=10, headers={
+                "User-Agent": "Mozilla/5.0"
+            })
+            # Find LinkedIn URLs
+            linkedin_urls = re.findall(
+                r'https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[^"\'<>\s]+',
+                resp.text
+            )
+            for url in linkedin_urls[:10]:
+                # Try to get the page title to extract a name
+                try:
+                    profile_resp = requests.get(url, timeout=5, headers={
+                        "User-Agent": "Mozilla/5.0"
+                    })
+                    title_match = re.search(r"<title>(.*?)</title>", profile_resp.text)
+                    if title_match:
+                        name = title_match.group(1).split("|")[0].strip()
+                        profiles.append(f"{name} ({url})")
+                    else:
+                        profiles.append(url)
+                except Exception:
+                    profiles.append(url)
+            break
+        except Exception:
+            pass
+    return profiles if profiles else ["No LinkedIn profiles found on the homepage."]
+
+
+# ---------------------------------------------------------------------------
+# PDF generation (extended with new sections)
+# ---------------------------------------------------------------------------
+def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_breaches,
+                  domain_breach_count, domain_breach_names, directories,
+                  nmap_data, nikto_findings, ssl_info):
     from fpdf import FPDF
 
     desktop = Path.home() / "Desktop"
@@ -225,8 +323,43 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
             pdf.cell(0, 6, safe, ln=True)
     pdf.ln(5)
 
-    # 2. Sensitive Directories
-    pdf.cell(0, 7, "[2] SENSITIVE DIRECTORIES / FILES", ln=True)
+    # 2. Employee / LinkedIn profiles
+    pdf.cell(0, 7, "[2] EMPLOYEE / LINKEDIN PROFILES", ln=True)
+    pdf.ln(2)
+    if not linkedin:
+        pdf.cell(0, 6, "No LinkedIn profiles found.", ln=True)
+    else:
+        for profile in linkedin[:15]:
+            safe = profile.encode("latin-1", errors="replace").decode("latin-1")
+            pdf.cell(0, 6, safe, ln=True)
+    pdf.ln(5)
+
+    # 3. Email harvesting & breach check
+    pdf.cell(0, 7, "[3] EMAIL ADDRESSES & BREACH STATUS", ln=True)
+    pdf.ln(2)
+    if emails:
+        pdf.cell(0, 6, "Harvested emails:", ln=True)
+        for e in emails[:10]:
+            pdf.cell(6, 6, "")
+            safe_e = e.encode("latin-1", errors="replace").decode("latin-1")
+            breaches = email_breaches.get(e, [])
+            if breaches:
+                pdf.cell(0, 6, f"{safe_e}  [BREACHED: {', '.join(breaches[:3])}]", ln=True)
+            else:
+                pdf.cell(0, 6, f"{safe_e}  [No breaches found]", ln=True)
+    pdf.cell(0, 6, "Common email guesses (not verified):", ln=True)
+    for guess in email_guesses[:10]:
+        safe_g = guess.encode("latin-1", errors="replace").decode("latin-1")
+        pdf.cell(6, 6, "")
+        pdf.cell(0, 6, safe_g, ln=True)
+    if domain_breach_count > 0:
+        pdf.cell(0, 6, f"Domain breaches: {domain_breach_count} ({', '.join(domain_breach_names)})", ln=True)
+    else:
+        pdf.cell(0, 6, "Domain does not appear in known data breaches.", ln=True)
+    pdf.ln(5)
+
+    # 4. Sensitive directories
+    pdf.cell(0, 7, "[4] SENSITIVE DIRECTORIES / FILES", ln=True)
     pdf.ln(2)
     if not directories:
         pdf.cell(0, 6, "No sensitive paths discovered.", ln=True)
@@ -236,8 +369,8 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
             pdf.cell(0, 6, safe, ln=True)
     pdf.ln(5)
 
-    # 3. Port Scan
-    pdf.cell(0, 7, "[3] PORT SCAN (Nmap)", ln=True)
+    # 5. Port scan (with vuln scripts)
+    pdf.cell(0, 7, "[5] PORT SCAN WITH VULNERABILITY DETECTION (Nmap)", ln=True)
     pdf.ln(2)
     error = nmap_data.get("error")
     if error:
@@ -252,10 +385,19 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
                 for port in host["open_ports"]:
                     pdf.cell(6, 6, "")
                     pdf.cell(0, 6, port, ln=True)
+        raw = nmap_data.get("raw", "")
+        if raw:
+            pdf.ln(3)
+            pdf.cell(0, 6, "Raw Nmap output (first 80 lines, includes CVE data):", ln=True)
+            pdf.set_font("Courier", size=6)
+            for line in raw.splitlines()[:80]:
+                safe_line = line.encode("latin-1", errors="replace").decode("latin-1")
+                pdf.cell(0, 4, safe_line, ln=True)
+            pdf.set_font("Courier", size=10)
     pdf.ln(5)
 
-    # 4. SSL Certificate
-    pdf.cell(0, 7, "[4] SSL/TLS CERTIFICATE", ln=True)
+    # 6. SSL cert
+    pdf.cell(0, 7, "[6] SSL/TLS CERTIFICATE", ln=True)
     pdf.ln(2)
     if ssl_info:
         pdf.cell(0, 6, f"Subject: {ssl_info['subject']}", ln=True)
@@ -265,8 +407,8 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
         pdf.cell(0, 6, "Could not retrieve SSL certificate.", ln=True)
     pdf.ln(5)
 
-    # 5. Web Vulnerabilities (Nikto)
-    pdf.cell(0, 7, "[5] WEB VULNERABILITY SCAN (Nikto)", ln=True)
+    # 7. Web vulnerabilities (Nikto)
+    pdf.cell(0, 7, "[7] WEB VULNERABILITY SCAN (Nikto)", ln=True)
     pdf.ln(2)
     if not nikto_findings:
         pdf.cell(0, 6, "No web vulnerabilities found or scan blocked.", ln=True)
@@ -278,13 +420,16 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
         pdf.set_font("Courier", size=10)
     pdf.ln(5)
 
-    # 6. Executive Summary
-    pdf.cell(0, 7, "[6] EXECUTIVE SUMMARY", ln=True)
+    # 8. Executive Summary
+    pdf.cell(0, 7, "[8] EXECUTIVE SUMMARY", ln=True)
     pdf.ln(2)
     total_ports = sum(len(h["open_ports"]) for h in nmap_data.get("hosts", []))
     summary = (
         f"Target: {target}\n"
         f"Subdomains: {len(subdomains)}\n"
+        f"LinkedIn profiles: {len(linkedin)}\n"
+        f"Harvested emails: {len(emails)}\n"
+        f"Domain breaches: {domain_breach_count}\n"
         f"Sensitive paths: {len(directories)}\n"
         f"Open ports: {total_ports}\n"
         f"Web findings: {len(nikto_findings)}\n"
@@ -299,7 +444,9 @@ def _generate_pdf(target, subdomains, directories, nmap_data, nikto_findings, ss
     # Spoken summary
     spoken = (
         f"Full cyber recon on {target} complete. "
-        f"Found {len(subdomains)} subdomains, {len(directories)} sensitive paths, "
+        f"Found {len(subdomains)} subdomains, {len(linkedin)} employee profiles, "
+        f"{len(emails)} emails ({sum(1 for e in emails if email_breaches.get(e))} breached), "
+        f"{domain_breach_count} domain breaches, {len(directories)} sensitive paths, "
         f"{total_ports} open ports, and {len(nikto_findings)} web findings. "
         f"Comprehensive report saved to your desktop."
     )
@@ -315,11 +462,21 @@ def cyber_recon(parameters: dict, player=None) -> str:
     if not target:
         return "No target specified."
 
-    # Extract domain name for subdomain search
     domain = target.replace("https://", "").replace("http://", "").split("/")[0]
 
-    # Run all phases
+    # Phases
     subdomains = _enumerate_subdomains(domain)
+    linkedin = _scrape_linkedin(domain)
+    emails, email_guesses = _harvest_emails(domain)
+
+    # Breach checks
+    email_breaches = {}
+    for e in emails:
+        breaches = _check_pwned(e)
+        if breaches:
+            email_breaches[e] = breaches
+    domain_breach_count, domain_breach_names = _check_domain_breaches(domain)
+
     directories = _brute_force_dirs(domain)
     nmap_data = _run_nmap(domain)
     nikto_raw = _run_nikto(domain)
@@ -327,7 +484,9 @@ def cyber_recon(parameters: dict, player=None) -> str:
     ssl_info = _check_ssl(domain)
 
     filepath, spoken = _generate_pdf(
-        domain, subdomains, directories, nmap_data, nikto_findings, ssl_info
+        domain, subdomains, linkedin, emails, email_guesses, email_breaches,
+        domain_breach_count, domain_breach_names, directories,
+        nmap_data, nikto_findings, ssl_info
     )
 
     return spoken + "\n" + str(filepath)
