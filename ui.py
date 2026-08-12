@@ -1050,6 +1050,40 @@ class MainWindow(QMainWindow):
     _camera_preview_signal = pyqtSignal(bytes)
     _state_sig = pyqtSignal(str)
     _setup_sig = pyqtSignal(str, int)
+    _remote_start_signal = pyqtSignal()
+    _remote_stop_signal = pyqtSignal()
+
+    _qr_signal = pyqtSignal(bytes, str, str)
+
+    def show_qr_code(self, qr_buf: io.BytesIO, url: str, password: str = ""):
+        self._qr_signal.emit(qr_buf.getvalue(), url, password)
+
+    def _show_qr_dialog(self, image_bytes: bytes, url: str, password: str = ""):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remote Access")
+        dlg.setFixedSize(380, 480)
+        layout = QVBoxLayout(dlg)
+
+        pix = QPixmap()
+        pix.loadFromData(image_bytes)
+        lbl = QLabel()
+        lbl.setPixmap(pix.scaled(250, 250, Qt.AspectRatioMode.KeepAspectRatio))
+        layout.addWidget(lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        url_label = QLabel(f"URL:\n{url}")
+        url_label.setFont(QFont("Courier New", 7))
+        url_label.setWordWrap(True)
+        url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(url_label)
+
+        pwd_label = QLabel(f"Password: {password}")
+        pwd_label.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        pwd_label.setWordWrap(True)
+        pwd_label.setStyleSheet("color: #0f0;")
+        pwd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(pwd_label)
+
+        dlg.show()
 
     def _toggle_interrupt(self):
         """Toggle between interrupt and resume."""
@@ -1101,6 +1135,9 @@ class MainWindow(QMainWindow):
             (screen.width()  - _DEFAULT_W) // 2,
             (screen.height() - _DEFAULT_H) // 2,
         )
+
+        self._qr_signal.connect(self._show_qr_dialog)
+        self._remote_active = False
 
         self.on_text_command  = None
         self._muted           = False
@@ -1167,6 +1204,62 @@ class MainWindow(QMainWindow):
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
+
+
+
+    def _toggle_remote_access(self):
+        """Toggle ngrok tunnel on/off."""
+        if self._remote_active:
+            from server import stop_ngrok
+            stop_ngrok()
+            self._remote_active = False
+            self._log.append_log("SYS: Remote tunnel closed.")
+            self._update_remote_btn()
+        else:
+            from server import start_ngrok, generate_qr
+            self._log.append_log("SYS: Starting remote tunnel...")
+            url = start_ngrok()
+            if url:
+                self._remote_active = True
+                from pathlib import Path
+                import json
+                config_path = Path(__file__).resolve().parent / "config" / "api_keys.json"
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    pwd = cfg.get("remote_password", "not set")
+                except Exception:
+                    pwd = "not set"
+                qr_buf = generate_qr(url)
+                self._log.append_log(f"SYS: Remote URL: {url}")
+                self.show_qr_code(qr_buf, url, pwd)
+                self._update_remote_btn()
+            else:
+                self._log.append_log("ERR: Could not start remote tunnel.")
+
+    def _update_remote_btn(self):
+        if self._remote_active:
+            self._remote_btn.setText("📡  DISCONNECT")
+            self._remote_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #140006; color: {C.RED};
+                    border: 1px solid {C.RED}; border-radius: 3px; padding: 4px;
+                }}
+                QPushButton:hover {{
+                    background: #1f000a; border: 1px solid #ff5577;
+                }}
+            """)
+        else:
+            self._remote_btn.setText("📡  REMOTE ACCESS")
+            self._remote_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2}; color: {C.PRI};
+                    border: 1px solid {C.PRI_DIM}; border-radius: 3px; padding: 4px;
+                }}
+                QPushButton:hover {{
+                    background: {C.PRI_GHO}; border: 1px solid {C.PRI};
+                }}
+            """)
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -1369,6 +1462,16 @@ class MainWindow(QMainWindow):
         lay.addWidget(info_panel)
         lay.addStretch()
 
+
+        # Remote Access button (toggle)
+        self._remote_btn = QPushButton("📡  REMOTE ACCESS")
+        self._remote_btn.setFixedHeight(34)
+        self._remote_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._remote_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remote_btn.clicked.connect(self._toggle_remote_access)
+        self._update_remote_btn()
+        lay.addWidget(self._remote_btn)
+
         for txt, col in [
             ("AI CORE\nACTIVE",     C.GREEN),
             ("SEC\nCLEARED",        C.PRI),
@@ -1382,6 +1485,7 @@ class MainWindow(QMainWindow):
                 f"border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 4px;"
             )
             lay.addWidget(lbl)
+
 
         return w
     def _build_right_panel(self) -> QWidget:
@@ -1635,13 +1739,21 @@ class MainWindow(QMainWindow):
 
     # Change signature:
     def _on_setup_done(self, key: str, or_key: str, os_name: str):
+        import os, json
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        # Load existing config (if any) to preserve custom keys
+        existing = {}
+        if API_FILE.exists():
+            try:
+                existing = json.loads(API_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        # Update only the core keys, keep everything else
+        existing["gemini_api_key"] = key
+        existing["openrouter_api_key"] = or_key
+        existing["os_system"] = os_name
         API_FILE.write_text(
-            json.dumps({
-                "gemini_api_key":    key,
-                "openrouter_api_key": or_key,
-                "os_system":         os_name,
-            }, indent=4),
+            json.dumps(existing, indent=4),
             encoding="utf-8",
         )
         self._ready = True
@@ -1672,6 +1784,8 @@ class JarvisUI:
         self._win.show()
         self.root = _RootShim(self._app)
 
+    def show_qr_code(self, qr_buf: io.BytesIO, url: str):
+        self._win.show_qr_code(qr_buf, url)
 
     @property
     def interrupt_flag(self) -> threading.Event:

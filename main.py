@@ -4,6 +4,8 @@ import json
 import sys
 import traceback
 from pathlib import Path
+from server import start_server, generate_qr
+from actions.morning_brief import morning_brief
 
 import requests
 import sounddevice as sd
@@ -108,6 +110,22 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "morning_brief",
+        "description": (
+            "Generates a morning briefing with cybersecurity news, AI/software engineering news, "
+            "and unread emails from Gmail. Saves the full report to the desktop and speaks a summary. "
+            "Call this when the user says 'good morning', 'morning brief', 'brief me', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "save": {"type": "BOOLEAN", "description": "Save report to desktop (default: true)"},
+                "speak": {"type": "BOOLEAN", "description": "Speak the report (default: true)"}
+            },
+            "required": []
         }
     },
     {
@@ -454,6 +472,17 @@ class JarvisLive:
         # LLM client placeholder; will be assigned once local setup completes.
         self.llm = None
 
+        self._last_response = ""
+        self._response_lock = threading.Lock()
+
+
+
+
+
+    def get_last_response(self) -> str:
+        with self._response_lock:
+            return self._last_response
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
@@ -505,6 +534,7 @@ class JarvisLive:
     def speak(self, text: str):
         if not self._loop or not self.session:
             return
+
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -694,6 +724,24 @@ class JarvisLive:
                     os._exit(0)
 
                 threading.Thread(target=_shutdown, daemon=True).start()
+
+            elif name == "morning_brief":
+                # Quick spoken confirmation
+                if self.session:
+                    await self.session.send_client_content(
+                        turns={"parts": [{"text": "Preparing your morning brief, sir."}]},
+                        turn_complete=True
+                    )
+                from actions.morning_brief import morning_brief as mb
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: mb(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "Morning brief delivered, sir."
+                # Store a snippet for the remote dashboard
+                with self._response_lock:
+                    self._last_response = result.split('\n')[0]  # first line of report
+
             else:
                 result = f"Unknown tool: {name}"
 
@@ -791,6 +839,9 @@ class JarvisLive:
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
+                            # Store for remote dashboard
+                            with self._response_lock:
+                                self._last_response = full_out
                             if full_out:
                                 self.ui.write_log(f"Jarvis: {full_out}")
                             out_buf = []
@@ -954,6 +1005,11 @@ def main():
         if online:
             ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
+
+        from server import start_server
+        start_server(jarvis)
+
+
 
         # Start automatic local LLM setup in background; assign jarvis.llm when ready.
         def _setup_local():
