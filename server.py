@@ -62,17 +62,20 @@ INDEX_PAGE = """
         #header h1 { font-size:18px; margin:0; color:#0ff; }
         #header a { color:#f44; font-size:12px; text-decoration:none; }
         #messages { flex:1; overflow-y:auto; padding:15px; display:flex; flex-direction:column; gap:8px; }
-        .msg { max-width:80%%; padding:10px 14px; border-radius:12px; word-wrap:break-word; animation:fadeIn 0.3s; }
+        .msg { max-width:80%; padding:10px 14px; border-radius:12px; word-wrap:break-word; animation:fadeIn 0.3s; }
         @keyframes fadeIn { from{opacity:0;transform:translateY(5px);} to{opacity:1;transform:translateY(0);} }
         .msg-you { align-self:flex-end; background:#0ff; color:#000; border-bottom-right-radius:4px; }
         .msg-jarvis { align-self:flex-start; background:#1a1a2e; color:#0ff; border-bottom-left-radius:4px; border:1px solid #0ff44; }
         .msg-status { align-self:center; color:#666; font-size:12px; font-style:italic; }
-        #input-area { display:flex; padding:10px; background:#0a0a0a; border-top:1px solid #333; gap:8px; }
+        #input-area { display:flex; padding:10px; background:#0a0a0a; border-top:1px solid #333; gap:8px; align-items:center; }
         #cmd { flex:1; padding:12px; font-size:16px; background:#111; color:#fff; border:1px solid #0ff; border-radius:20px; outline:none; }
         #cmd:focus { border-color:#0ff; box-shadow:0 0 8px #0ff44; }
-        button { padding:12px 20px; background:#0ff; color:#000; border:none; border-radius:20px; font-weight:bold; cursor:pointer; }
+        #micBtn { padding:0; background:#0ff; color:#000; border:none; border-radius:50%; width:48px; height:48px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; }
+        #micBtn.rec { background:#f00; color:#fff; animation:pulse 1s infinite; }
+        @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(255,0,0,0.7);} 70%{box-shadow:0 0 0 15px rgba(255,0,0,0);} 100%{box-shadow:0 0 0 0 rgba(255,0,0,0);} }
+        #sendBtn { padding:12px 20px; background:#0ff; color:#000; border:none; border-radius:20px; font-weight:bold; cursor:pointer; }
         button:disabled { opacity:0.5; cursor:not-allowed; }
-        .dot-flashing { display:inline-block; width:6px; height:6px; border-radius:50%%; background:#0ff; animation:flash 0.8s infinite alternate; margin:0 2px; }
+        .dot-flashing { display:inline-block; width:6px; height:6px; border-radius:50%; background:#0ff; animation:flash 0.8s infinite alternate; margin:0 2px; }
         .dot-flashing:nth-child(2) { animation-delay:0.2s; }
         .dot-flashing:nth-child(3) { animation-delay:0.4s; }
         @keyframes flash { to{opacity:0.3;} }
@@ -85,11 +88,70 @@ INDEX_PAGE = """
     </div>
     <div id="messages"></div>
     <div id="input-area">
-        <input id="cmd" type="text" placeholder="Type a command..." autocomplete="off">
-        <button id="sendBtn" onclick="send()">Send</button>
+        <input id="cmd" type="text" placeholder="Type or speak a command..." autocomplete="off">
+        <button id="micBtn" title="Speak">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+        </button>
+        <button id="sendBtn" onclick="sendText()">Send</button>
     </div>
     <script>
         let waiting = false;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let isRecording = false;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+            recognition.continuous = false;
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript.trim();
+                if (transcript) {
+                    document.getElementById('cmd').value = transcript;
+                    sendText();
+                }
+                stopRecording();
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error', event.error);
+                stopRecording();
+            };
+
+            recognition.onend = () => {
+                stopRecording();
+            };
+        }
+
+        function startRecording() {
+            if (!recognition || isRecording) return;
+            isRecording = true;
+            recognition.start();
+            document.getElementById('micBtn').classList.add('rec');
+        }
+
+        function stopRecording() {
+            if (!recognition) return;
+            isRecording = false;
+            try { recognition.stop(); } catch(e) {}
+            document.getElementById('micBtn').classList.remove('rec');
+        }
+
+        document.getElementById('micBtn').addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
 
         function addMessage(text, cls) {
             const div = document.createElement('div');
@@ -113,30 +175,27 @@ INDEX_PAGE = """
             if (el) el.remove();
         }
 
-        async function send() {
-            if (waiting) return;
+        async function sendText() {
             const input = document.getElementById('cmd');
             const cmd = input.value.trim();
-            if (!cmd) return;
+            if (!cmd || waiting) return;
             input.value = '';
             addMessage(cmd, 'msg-you');
             waiting = true;
             document.getElementById('sendBtn').disabled = true;
             addTyping();
 
-            // Poll for response
             let reply = null;
             let attempts = 0;
-            const maxAttempts = 600; // 600 × 1s = 10 minutes max
+            const maxAttempts = 600;
+
             try {
-                // Fire the command
                 await fetch('/command', {
                     method:'POST',
                     headers:{'Content-Type':'application/json'},
                     body:JSON.stringify({command:cmd})
                 });
 
-                // Poll for result
                 while (attempts < maxAttempts) {
                     await new Promise(r => setTimeout(r, 1000));
                     const res = await fetch('/result');
@@ -163,7 +222,7 @@ INDEX_PAGE = """
         }
 
         document.getElementById('cmd').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') send();
+            if (e.key === 'Enter') sendText();
         });
     </script>
 </body>
@@ -274,7 +333,26 @@ def start_ngrok():
 
 def stop_ngrok():
     global _ngrok_process
+    # Stop the process we started (if any)
     if _ngrok_process:
-        _ngrok_process.terminate()
+        try:
+            _ngrok_process.terminate()
+        except Exception:
+            pass
         _ngrok_process = None
-        print("[Server] 🔌 Remote tunnel closed.")
+
+    # Forcefully kill any remaining ngrok.exe processes (Windows)
+    try:
+        import platform
+        if platform.system() == "Windows":
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "ngrok.exe"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        else:
+            subprocess.run(["pkill", "-f", "ngrok"], capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        print(f"[Server] ⚠️ Could not force kill ngrok: {e}")
+
+    print("[Server] 🔌 Remote tunnel closed.")
