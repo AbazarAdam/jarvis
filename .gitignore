@@ -23,3 +23,6 @@ Thumbs.db
 
 # Temporary files
 *.tmp
+# Gmail OAuth secrets
+config/gmail_credentials.json
+config/gmail_token.pickle
