@@ -1,11 +1,12 @@
 # J.A.R.V.I.S – Just A Rather Very Intelligent System v1.0
 
-*A real-time, voice-first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
+*A real‑time, voice‑first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
 
-![GitHub](https://img.shields.io/badge/status-active-brightgreen)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![CI](https://github.com/AbazarAdam/jarvis/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-yellow)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
+![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)
 
 ---
 
