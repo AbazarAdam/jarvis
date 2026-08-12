@@ -247,8 +247,16 @@ def start_ngrok():
     if _ngrok_process is not None:
         return None
     import requests
+    ngrok_path = Path(__file__).resolve().parent / "tools" / "ngrok.exe"
+    if not ngrok_path.exists():
+        # Fallback to old location
+        ngrok_path = Path(__file__).resolve().parent / "ngrok.exe"
+    if not ngrok_path.exists():
+        print("[Server] ❌ ngrok.exe not found in tools/ folder")
+        return None
+
     _ngrok_process = subprocess.Popen(
-        [str(BASE_DIR / "ngrok.exe"), "http", "5050", "--log=stdout"],
+        [str(ngrok_path), "http", "5050", "--log=stdout"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW
     )

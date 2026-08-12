@@ -88,11 +88,20 @@ def set_volume_windows(level: int) -> str:
     """Set master volume (0-100) using nircmd.exe."""
     import subprocess, os
 
-    # Path to nircmd.exe in the Jarvis project folder
-    jarvis_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    nircmd_path = os.path.join(jarvis_dir, "nircmd.exe")
+    # Hard‑coded fallback path
+    nircmd_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "tools", "nircmd.exe"
+    )
 
-    # nircmd uses volume value from 0 to 65535
+    if not os.path.exists(nircmd_path):
+        # Additional fallbacks
+        alt = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "nircmd.exe")
+        if os.path.exists(alt):
+            nircmd_path = alt
+        else:
+            return "Could not set volume: nircmd.exe not found in tools/ folder."
+
     vol_value = int(level / 100.0 * 65535)
 
     try:
@@ -105,8 +114,6 @@ def set_volume_windows(level: int) -> str:
             return f"Volume set to {level}%"
         else:
             return f"Could not set volume: nircmd error {result.returncode}"
-    except FileNotFoundError:
-        return "Could not set volume: nircmd.exe not found. Place nircmd.exe in the Jarvis folder."
     except Exception as e:
         return f"Could not set volume: {e}"
 

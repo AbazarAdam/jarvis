@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
+from actions.security_scanner import security_scan
 
 import requests
 import sounddevice as sd
@@ -110,6 +111,20 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "security_scan",
+        "description": (
+            "Runs a security scan (Nmap + Nikto) on a target IP or URL and generates a PDF report. "
+            "Use for 'scan example.com', 'run a security scan on 192.168.1.1', etc."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target": {"type": "STRING", "description": "IP address or URL to scan"}
+            },
+            "required": ["target"]
         }
     },
     {
@@ -742,6 +757,14 @@ class JarvisLive:
                 with self._response_lock:
                     self._last_response = result.split('\n')[0]  # first line of report
 
+            elif name == "security_scan":
+                from actions.security_scanner import security_scan as ss
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: ss(parameters=args, player=self.ui)
+                )
+                result = r or "Security scan completed."
+
             else:
                 result = f"Unknown tool: {name}"
 
@@ -972,10 +995,17 @@ class JarvisLive:
                             except Exception:
                                 break
                     tg.create_task(_heartbeat())
-                    
+
             except Exception as e:
                 print(f"[JARVIS] ⚠️ {e}")
                 traceback.print_exc()
+                # Log to crash file
+                from datetime import datetime
+                from pathlib import Path
+                log_dir = Path(__file__).resolve().parent / "logs"
+                log_dir.mkdir(exist_ok=True)
+                with open(log_dir / "crash.log", "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now()}] ASYNCIO ERROR\n{traceback.format_exc()}\n")
 
             self.set_speaking(False)
             self.ui.set_state("THINKING")
@@ -984,6 +1014,11 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+
+    from core.error_handler import setup
+
+    # We don't have the jarvis.speak callback yet, so we'll update it later.
+    setup(speak=None, write_log=ui.write_log)
 
     def runner():
         online = is_online()
@@ -1005,6 +1040,10 @@ def main():
         if online:
             ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
+
+        # Now the global error handler can speak through Jarvis
+        import core.error_handler as eh
+        eh._speak_callback = jarvis.speak
 
         from server import start_server
         start_server(jarvis)
@@ -1044,7 +1083,7 @@ def main():
             except Exception:
                 pass
 
-        threading.Thread(target=_setup_local, daemon=True).start()
+        #threading.Thread(target=_setup_local, daemon=True).start()
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:

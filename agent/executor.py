@@ -114,18 +114,19 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
     params = dict(params)
 
     if tool == "file_controller" and params.get("action") in ("write", "create_file"):
-        # Always look for the longest previous result to use as file content
-        content = params.get("content", "")
-        if not content or len(content) < 100:
-            # collect all non‑empty, long results
-            all_results = [
-                v for v in step_results.values()
-                if v and len(v) > 100 and v not in ("Done.", "Completed.")
-            ]
-            if all_results:
-                # use the last one (most recent web search) as the main content
-                combined = all_results[-1]
-                # translate to the user’s language if needed
+        # Gather all substantial results
+        all_results = [
+            v for v in step_results.values()
+            if v and len(v) > 100 and v not in ("Done.", "Completed.")
+        ]
+        if all_results:
+            combined = all_results[-1]
+            # Block writing useless disclaimers
+            if any(phrase in combined for phrase in [
+                "I cannot", "I will not", "unauthorized", "I am unable"
+            ]):
+                params["content"] = "Research could not be completed — the requested action was blocked."
+            else:
                 translated = _translate_to_goal_language(combined, goal)
                 params["content"] = translated
                 print(f"[Executor] 💉 Injected content (len={len(translated)})")

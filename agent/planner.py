@@ -247,6 +247,8 @@ def _fallback_plan(goal: str) -> dict:
             })
             return {"goal": goal, "steps": steps}
 
+
+
         # Otherwise assume conversion/resize → use file_processor
         action = "to_pdf" if ("pdf" in goal_lower or "to_pdf" in goal_lower) else "convert"
         steps.append({
@@ -256,6 +258,8 @@ def _fallback_plan(goal: str) -> dict:
             "parameters": {"action": action, "file_path": f"desktop/{filename}"}
         })
         return {"goal": goal, "steps": steps}
+
+
 
     # --- Generic research task (original fallback) ---
     steps = [
