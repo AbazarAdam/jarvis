@@ -1,12 +1,13 @@
 # J.A.R.V.I.S – Just A Rather Very Intelligent System v1.0
 
-*A real‑time, voice‑first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
+*A real-time, voice-first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
 
 ![CI](https://github.com/AbazarAdam/jarvis/actions/workflows/ci.yml/badge.svg)
-![Python](https://img.shields.io/badge/python-3.11%2B-yellow)
+![Tests](https://img.shields.io/badge/tests-58%20passed-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-yellow)
+![Coverage](https://img.shields.io/badge/coverage-6%25-red)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
-![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)
 
 ---
 
@@ -25,14 +26,13 @@ flowchart TB
     end
 
     subgraph Tools
-        SETTINGS[Computer Settings<br/>Volume, Brightness, Windows]
-        BROWSER[Browser Control<br/>Playwright]
-        FILES[File Controller<br/>CRUD, Search, Organize]
-        PROCESSOR[File Processor<br/>Convert, Resize, Summarize]
+        SETTINGS[Computer Settings]
+        BROWSER[Browser Control]
+        FILES[File Controller]
+        PROCESSOR[File Processor]
         VISION[Screen & Camera Vision]
-        RECON[Cyber Recon<br/>OSINT + Nmap + Nikto]
+        RECON[Cyber Recon]
         BRIEF[Morning Brief]
-        SEARCH[Web Search]
         REMINDERS[Reminders]
         PLUGINS[Plugin System]
     end
@@ -52,7 +52,6 @@ flowchart TB
     AGENT --> VISION
     AGENT --> RECON
     AGENT --> BRIEF
-    AGENT --> SEARCH
     AGENT --> REMINDERS
     AGENT --> PLUGINS
     SETTINGS --> AUDIO
@@ -62,7 +61,6 @@ flowchart TB
     VISION --> AUDIO
     RECON --> AUDIO
     BRIEF --> AUDIO
-    SEARCH --> AUDIO
     REMINDERS --> AUDIO
     PLUGINS --> AUDIO
     SETTINGS --> UI
@@ -72,7 +70,6 @@ flowchart TB
     VISION --> UI
     RECON --> UI
     BRIEF --> UI
-    SEARCH --> UI
     REMINDERS --> UI
     PLUGINS --> UI
 ```
@@ -83,11 +80,11 @@ flowchart TB
 
 ### 🖥️ System Control
 
-* **Volume** – precise levels via `nircmd.exe`
-* **Brightness** – WMI-based, works on laptops
-* **Window Management** – minimize, maximize, close any app by title
-* **Lock / Restart / Shutdown** – direct Windows API calls
-* **Screenshots** – capture full screen and save to Desktop
+* **Volume** — precise levels via `nircmd.exe`
+* **Brightness** — WMI-based, works on laptops
+* **Window management** — minimize, maximize, and close apps by title
+* **Lock / Restart / Shutdown** — direct Windows API calls
+* **Screenshots** — capture the full screen and save it to the Desktop
 
 ### 🌐 Browser Automation (Playwright)
 
@@ -95,98 +92,122 @@ flowchart TB
 * Search Google, Bing, or DuckDuckGo
 * Manage tabs: new, switch, close, list
 * Scroll by pixel, full page, or to specific elements
-* Fill forms, click elements, extract page text, reload
+* Fill forms, click elements, extract page text, and reload pages
 
 ### 📁 File Operations
 
-* Create, read, write, move, copy, rename, delete files
-* Organize Desktop by file type
+* Create, read, write, move, copy, rename, and delete files
+* Organize the Desktop by file type
 * Search by name or extension
 * Disk usage and large-file scanner
 
 ### 🔄 File Processing
 
-* Convert TXT → PDF (pure Python, no Word required)
-* Convert DOCX → PDF (requires Microsoft Word)
-* Resize, compress, and convert images (PNG, JPG, WebP, BMP, TIFF)
-* Summarize PDFs, Word docs, and text files using Gemini
+* Convert **TXT → PDF** (pure Python)
+* Convert **DOCX → PDF** (requires Microsoft Word)
+* Resize, compress, and convert images
+* Summarize PDFs, Word documents, and text files with Gemini
 * Transcribe audio and video files
-* Analyze CSV / Excel datasets
+* Analyze CSV and Excel datasets
 
 ### 🧩 Multi-Step Agent
 
-Give JARVIS a complex goal, for example:
+Give JARVIS a complex goal, and the planner automatically breaks it into steps such as:
 
-> “Research the health benefits of green tea and save a summary to my desktop.”
-
-The planner automatically breaks it into steps: **web search → collect results → write file** with error recovery and automatic replanning.
+* Web search → Collect results → Write file
+* Error recovery and automatic replanning
 
 ### 🧠 Long-Term Memory
 
-JARVIS remembers facts about you (identity, preferences, projects) across sessions in `memory/long_term.json`.
+JARVIS stores a structured user profile in `memory/long_term.json` and remembers important facts across sessions.
 
 ### 📷 Camera Vision & Streaming
 
 * Single snapshot analysis (screen or webcam)
 * Continuous camera streaming with real-time observations
-* STOP button interrupts immediately
+* Instant interruption via the **STOP** button
 
 ### 🛡️ Cyber Recon & Pentest
 
-Unified cybersecurity tool that runs:
+Unified cybersecurity toolkit including:
 
 * Subdomain enumeration (crt.sh)
-* Email harvesting & breach checking (Have I Been Pwned)
-* LinkedIn/employee discovery
-* Nmap port scanning with CVE vulnerability scripts
+* Email harvesting and breach checking
+* LinkedIn / employee discovery
+* Nmap port scanning with CVE scripts
 * Nikto web vulnerability scanning
 * SSL/TLS certificate analysis
-* Generates a professional PDF report
+* Professional PDF reporting
 
 ### 📡 Remote Dashboard
 
 * Password-protected web dashboard
 * Type or speak commands from any phone
 * QR code pairing
-* Force-kill ngrok on disconnect
+* Automatic ngrok shutdown on disconnect
 
 ### ☀️ Morning Brief
 
-* Fetches cybersecurity news, AI/software engineering news, and unread emails
-* Speaks a concise summary and saves a full report to Desktop
+* Cybersecurity news
+* AI & software engineering news
+* Unread email summary
+* Spoken overview + full report saved to Desktop
 
 ### 🧩 Plugin Architecture
 
-Drop Python plugins into `plugins/` and JARVIS auto-loads them at startup. No core code changes needed.
+Drop Python plugins into the `plugins/` folder and JARVIS will auto-load them at startup — no core code changes required.
 
 ---
 
-## 📋 Quick Start
+## 📋 Prerequisites
 
-### 1. Clone the repository
+### Core Features
+
+* Windows 10 / 11
+* Python 3.11+
+* Gemini API key
+* OpenRouter API key
+
+### Cyber Recon (`cyber_recon`)
+
+Install the following external tools:
+
+* **Nmap:** https://nmap.org/download.html
+* **Strawberry Perl:** https://strawberryperl.com/
+* **Nikto:** clone into `tools/nikto`
+
+```bash
+git clone https://github.com/sullo/nikto tools/nikto
+```
+
+---
+
+## 📦 Quick Start
+
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/AbazarAdam/jarvis.git
 cd jarvis
 ```
 
-### 2. Create a virtual environment (recommended)
+### 2. Create a Virtual Environment
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-### 3. Install dependencies
+### 3. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 playwright install
 ```
 
-### 4. Set up API keys
+### 4. Configure API Keys
 
-Create `config/api_keys.json` with your Gemini and OpenRouter keys:
+Create `config/api_keys.json`:
 
 ```json
 {
@@ -205,28 +226,34 @@ python main.py
 
 ---
 
-## 🔮 Roadmap (v1.1+)
+## 🔮 Roadmap
 
 ### 🛡️ Cybersecurity & Engineering
 
+* [x] Unified cyber recon (OSINT + Nmap + Nikto)
 * [ ] Nuclei / deeper CVE scanning
 * [ ] Encrypted memory store
-* [ ] Permission manager for dangerous actions
-* [ ] Automated audit log
+* [ ] Permission manager
 * [ ] Social engineering OSINT expansion
 
 ### 🤖 AI & Productivity
 
+* [x] Morning brief
+* [x] Camera vision & streaming
+* [x] Remote voice dashboard
 * [ ] Wake word “Jarvis”
-* [ ] Conversation context memory (full history)
+* [ ] Conversation context memory
 * [ ] Proactive assistance
-* [ ] Dark/light mode
+* [ ] Dark / light mode
 
 ### 🔧 Engineering Excellence
 
-* [ ] Docker deployment
-* [ ] Unit tests & CI/CD
-* [ ] More plugin examples
+* [x] Unit tests & CI/CD
+* [x] Docker build job
+* [x] Plugin architecture
+* [ ] Full Dockerized JARVIS
+* [ ] Code coverage service (Codecov)
+* [ ] Linting and type checking
 
 ---
 
@@ -239,7 +266,7 @@ Cybersecurity Engineer & Software Engineer
 
 ## 📄 License
 
-Personal and non-commercial use only – Creative Commons BY-NC 4.0
+Personal and non-commercial use only — [Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ---
 
