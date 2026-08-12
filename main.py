@@ -7,6 +7,7 @@ from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
 from actions.cyber_recon import cyber_recon
+from actions.screen_processor import screen_process, camera_stream
 
 import requests
 import sounddevice as sd
@@ -111,6 +112,22 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "camera_stream",
+        "description": (
+            "Streams camera frames continuously for a short duration and speaks real-time observations. "
+            "Use for 'watch through the camera', 'observe the room', 'monitor what is happening'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "duration": {"type": "INTEGER", "description": "Total streaming time in seconds (default 20, max 60)"},
+                "interval": {"type": "NUMBER",  "description": "Seconds between camera captures (default 3, min 1)"},
+                "text":     {"type": "STRING",  "description": "Question or instruction for each frame (default: What do you see?)"}
+            },
+            "required": []
         }
     },
     {
@@ -601,6 +618,28 @@ class JarvisLive:
             ),
         )
 
+    async def _run_cancellable(self, fn, *args):
+        """Run a blocking tool in an executor, but cancel waiting if STOP is pressed."""
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(None, fn, *args)
+
+        while True:
+            # STOP pressed → abandon the future, return immediately
+            if self.interrupt_flag.is_set():
+                self.interrupt_flag.clear()
+                self.set_speaking(False)
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                print("[JARVIS] ⏹ Tool execution interrupted by user")
+                return None
+
+            done, _ = await asyncio.wait([future], timeout=0.1)
+            if done:
+                try:
+                    return future.result()
+                except Exception as e:
+                    raise e
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
@@ -626,20 +665,20 @@ class JarvisLive:
 
         try:
             if name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
+                r = await self._run_cancellable(lambda: open_app(parameters=args, response=None, player=self.ui))
                 result = r or f"Opened {args.get('app_name')}."
 
 
             elif name == "browser_control":
-                r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
+                r = await self._run_cancellable(lambda: browser_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "file_controller":
-                r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
+                r = await self._run_cancellable(lambda: file_controller(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
+                r = await self._run_cancellable(lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
 
 
@@ -662,20 +701,32 @@ class JarvisLive:
                 ).start()
                 result = "Vision module activated. Stay completely silent — vision module will speak directly."
 
+            elif name == "camera_stream":
+                threading.Thread(
+                    target=camera_stream,
+                    kwargs={"parameters": args, "player": self.ui},
+                    daemon=True
+                ).start()
+                # Return silently so the main voice doesn't overlap the vision module
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "ok", "silent": True}
+                )
+
             elif name == "computer_settings":
-                r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
+                r = await self._run_cancellable(lambda: computer_settings(parameters=args, response=None, player=self.ui))
                 result = r or "Done."
 
             elif name == "desktop_control":
-                r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
+                r = await self._run_cancellable(lambda: desktop_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "code_helper":
-                r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
+                r = await self._run_cancellable(lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
             elif name == "dev_agent":
-                r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
+                r = await self._run_cancellable(lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
 
@@ -683,34 +734,37 @@ class JarvisLive:
                 from agent.task_queue import get_queue, TaskPriority
                 priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
                 priority = priority_map.get(args.get("priority", "normal").lower(), TaskPriority.NORMAL)
+                task_id = get_queue().submit(goal=args.get("goal", ""), priority=priority, speak=None)
 
-                # Submit the task – do NOT pass self.speak, so the executor doesn't try to speak.
-                task_id = get_queue().submit(
-                    goal=args.get("goal", ""),
-                    priority=priority,
-                    speak=None,               # <-- no speak callback
-                )
-
-                # Wait for the task to finish (max 60 seconds)
+                # Wait for completion or interrupt
                 start = asyncio.get_event_loop().time()
                 while True:
+                    if self.interrupt_flag.is_set():
+                        self.interrupt_flag.clear()
+                        get_queue().cancel(task_id)
+                        self.set_speaking(False)
+                        if not self.ui.muted:
+                            self.ui.set_state("LISTENING")
+                        print("[JARVIS] ⏹ Agent task interrupted")
+                        return types.FunctionResponse(
+                            id=fc.id, name=name,
+                            response={"result": "Interrupted by user.", "silent": True}
+                        )
+
                     status = get_queue().get_status(task_id)
                     if status and status["status"] in ("completed", "failed", "cancelled"):
                         break
-                    if asyncio.get_event_loop().time() - start > 60:
+                    if asyncio.get_event_loop().time() - start > 120:
                         result = "Task timed out, sir."
                         break
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
 
-                # Get the final result (the summary text from the executor)
                 final_status = get_queue().get_status(task_id)
                 result = (final_status.get("result") or final_status.get("error") or "Done, sir.") if final_status else "Task finished."
-
-                # Return the summary as the tool result – the model will speak it.
                 return types.FunctionResponse(
                     id=fc.id, name=name,
                     response={"result": result}
-                )    
+                )  
             
 
             elif name == "web_search":
@@ -723,11 +777,11 @@ class JarvisLive:
                 except RuntimeError:
                     pass
 
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
+                r = await self._run_cancellable(lambda: web_search_action(parameters=args, player=self.ui))
                 result = r or "Done."
 
             elif name == "computer_control":
-                r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
+                r = await self._run_cancellable(lambda: computer_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
 

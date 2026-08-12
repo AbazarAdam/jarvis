@@ -330,6 +330,10 @@ def screen_process(
 
     _ensure_started(player=player)
 
+    if player and hasattr(player, 'interrupt_flag') and player.interrupt_flag.is_set():
+        print("[ScreenProcess] ⏹ Interrupted before capture")
+        return False
+
     try:
         if angle == "camera":
             image_bytes = _capture_camera()
@@ -357,6 +361,47 @@ def screen_process(
     print(f"[ScreenProcess] 📦 {len(image_bytes)} bytes → sending")
     _live.analyze(image_bytes, mime_type, user_text)
     return True
+
+
+def camera_stream(
+    parameters:     dict,
+    player=None,
+    session_memory=None,
+) -> str:
+    """
+    Continuously capture camera frames and send them to the vision session.
+    parameters:
+        duration : total streaming time in seconds (default 20, max 60)
+        interval : seconds between captures (default 3, min 1)
+        text     : question or instruction for each frame (default: What do you see?)
+    """
+    duration = max(5, min(60, int(parameters.get("duration", 20) or 20)))
+    interval = max(1.0, min(10.0, float(parameters.get("interval", 3) or 3)))
+    prompt   = (parameters.get("text") or "What do you see? Be brief.").strip()
+
+    _ensure_started(player=player)
+
+    def _run():
+        end_time = time.time() + duration
+        while time.time() < end_time:
+            # Check the stop button / interrupt flag
+            if player and hasattr(player, 'interrupt_flag') and player.interrupt_flag.is_set():
+                print("[CameraStream] ⏹ Interrupted by user")
+                break
+
+            try:
+                image_bytes = _capture_camera()
+                print("[CameraStream] 📷 Frame captured, sending to vision")
+                _live.analyze(image_bytes, "image/jpeg", prompt)
+            except Exception as e:
+                print(f"[CameraStream] ⚠️ Capture error: {e}")
+
+            time.sleep(interval)
+
+        print("[CameraStream] ✅ Streaming ended")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return "Camera streaming started."
 
 
 def warmup_session(player=None):
