@@ -27,4 +27,8 @@ def test_load_memory_invalid_json(tmp_path, monkeypatch):
     fake_file.write_text("{invalid json", encoding="utf-8")
     monkeypatch.setattr("memory.memory_manager.MEMORY_PATH", fake_file)
     data = load_memory()
-    assert data == {}
+    # Invalid JSON should return the default empty memory structure
+    assert isinstance(data, dict)
+    assert "identity" in data
+    assert data["identity"] == {}
+    assert data["preferences"] == {}
