@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
-from actions.security_scanner import security_scan
+from actions.cyber_recon import cyber_recon
 
 import requests
 import sounddevice as sd
@@ -114,15 +114,17 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "security_scan",
+        "name": "cyber_recon",
         "description": (
-            "Runs a security scan (Nmap + Nikto) on a target IP or URL and generates a PDF report. "
-            "Use for 'scan example.com', 'run a security scan on 192.168.1.1', etc."
+            "Runs full cyber reconnaissance on a target: subdomain enumeration, "
+            "sensitive directory discovery, Nmap port scan, Nikto web vulnerability scan, "
+            "and SSL certificate check. Generates a comprehensive PDF report. "
+            "Use for 'run full recon on example.com', 'cyber scan example.com', etc."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "target": {"type": "STRING", "description": "IP address or URL to scan"}
+                "target": {"type": "STRING", "description": "Domain or IP address to scan"}
             },
             "required": ["target"]
         }
@@ -757,13 +759,14 @@ class JarvisLive:
                 with self._response_lock:
                     self._last_response = result.split('\n')[0]  # first line of report
 
-            elif name == "security_scan":
-                from actions.security_scanner import security_scan as ss
+
+            elif name == "cyber_recon":
+                from actions.cyber_recon import cyber_recon as cr
                 r = await loop.run_in_executor(
                     None,
-                    lambda: ss(parameters=args, player=self.ui)
+                    lambda: cr(parameters=args, player=self.ui)
                 )
-                result = r or "Security scan completed."
+                result = r or "Cyber reconnaissance completed."
 
             else:
                 result = f"Unknown tool: {name}"
