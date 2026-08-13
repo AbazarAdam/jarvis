@@ -9,6 +9,7 @@ from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
 from actions.security_mode import security_mode
 from actions.screen_processor import screen_process, camera_stream
+from core.audit import log_action
 
 import requests
 import sounddevice as sd
@@ -290,6 +291,10 @@ TOOL_DECLARATIONS = [
             "window_title": {
                 "type": "STRING",
                 "description": "Optional. The title/name of the window to minimize, maximize, or close (e.g. 'Chrome', 'Notepad'). Required when targeting a specific application window."
+            },
+            "confirmed": {
+                "type": "STRING",
+                "description": "Set to 'yes' to confirm dangerous actions like restart, shutdown. Required for those actions."
             }
         },
         "required": []
@@ -336,6 +341,7 @@ TOOL_DECLARATIONS = [
                 "name":        {"type": "STRING", "description": "File name to search for"},
                 "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
                 "count":       {"type": "INTEGER", "description": "Number of results for largest"},
+                "confirmed":   {"type": "STRING", "description": "Set to 'yes' to confirm dangerous actions like delete. Required for those actions."}
             },
             "required": ["action"]
         }
@@ -540,6 +546,12 @@ TOOL_DECLARATIONS = [
 ]
 
 
+DANGEROUS_TOOL_ACTIONS = {
+    "computer_settings": {"restart", "shutdown"},
+    "file_controller": {"delete"},
+}
+
+
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
@@ -696,6 +708,8 @@ class JarvisLive:
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
+        log_action(name, args, status="started")
+
         self.ui.set_state("THINKING")
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -706,6 +720,8 @@ class JarvisLive:
                 print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
+
+            log_action(name, args, result=str(result)[:200], status="completed")
             return types.FunctionResponse(
                 id=fc.id, name=name,
                 response={"result": "ok", "silent": True}
@@ -713,6 +729,21 @@ class JarvisLive:
 
         loop   = asyncio.get_event_loop()
         result = "Done."
+        # Permission manager: require confirmation for dangerous actions
+        dangerous_actions = DANGEROUS_TOOL_ACTIONS.get(name, set())
+        action_value = args.get("action", "").lower()
+        if action_value in dangerous_actions:
+            confirmed = str(args.get("confirmed", "")).lower()
+            if confirmed not in ("yes", "true", "1", "confirm"):
+                log_action(name, args, result="Blocked: confirmation required", status="blocked")
+                self.speak(
+                    f"This action requires confirmation, sir. "
+                    f"Please say 'yes' to confirm {action_value}."
+                )
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "Confirmation required."}
+                )
 
         try:
             # Plugin dispatch
