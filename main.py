@@ -7,7 +7,7 @@ import importlib.util
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
-from actions.cyber_recon import cyber_recon
+from actions.security_mode import security_mode
 from actions.screen_processor import screen_process, camera_stream
 
 import requests
@@ -182,12 +182,12 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "cyber_recon",
+        "name": "security_mode",
         "description": (
-            "Runs full cyber reconnaissance on a target: subdomain enumeration, "
-            "sensitive directory discovery, Nmap port scan, Nikto web vulnerability scan, "
-            "and SSL certificate check. Generates a comprehensive PDF report. "
-            "Use for 'run full recon on example.com', 'cyber scan example.com', etc."
+            "Runs a full security assessment: OSINT, subdomain enumeration, "
+            "Nmap port scanning with CVE scripts, Nikto web scanning, "
+            "Nuclei CVE scanning, SSL analysis, and generates a PDF report. "
+            "Use for any security scan, penetration test, reconnaissance, or vulnerability assessment."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -873,13 +873,12 @@ class JarvisLive:
                     self._last_response = result.split('\n')[0]  # first line of report
 
 
-            elif name == "cyber_recon":
-                from actions.cyber_recon import cyber_recon as cr
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: cr(parameters=args, player=self.ui)
+            elif name in ("security_mode", "cyber_recon"):
+                from actions.security_mode import security_mode as sm
+                r = await self._run_cancellable(
+                    lambda: sm(parameters=args, player=self.ui)
                 )
-                result = r or "Cyber reconnaissance completed."
+                result = r or "Security assessment completed."
 
             else:
                 result = f"Unknown tool: {name}"

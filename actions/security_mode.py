@@ -1,5 +1,5 @@
 """
-cyber_recon.py — JARVIS Unified Cyber Reconnaissance (OSINT + Exploit)
+Security_mode.py — JARVIS Unified Cyber Reconnaissance (OSINT + Exploit)
 """
 
 import re
@@ -156,7 +156,61 @@ def _check_ssl(target):
     except Exception:
         return None
 
+def _find_nuclei():
+    tools_dir = Path(__file__).resolve().parent.parent / "tools"
+    candidate = tools_dir / "nuclei" / "nuclei.exe"
+    if candidate.exists():
+        return str(candidate)
+    return shutil.which("nuclei")
 
+
+def _run_nuclei(target):
+    nuclei_exe = _find_nuclei()
+    if not nuclei_exe:
+        return []
+
+    if not target.startswith(("http://", "https://")):
+        target = "https://" + target
+
+    cmd = [
+        nuclei_exe,
+        "-u", target,
+        "-severity", "critical,high,medium",
+        "-tags", "cve",
+        "-silent",
+        "-jsonl",
+        "-timeout", "10",
+        "-retries", "1",
+        "-c", "25",
+        "-no-color",
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        output = proc.stdout.strip()
+        findings = []
+        for line in output.splitlines():
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            name = data.get("info", {}).get("name", "Unknown")
+            sev = data.get("info", {}).get("severity", "unknown")
+            matched = data.get("matched-at", target)
+            findings.append(f"{sev.upper()}: {name} ({matched})")
+        return findings
+    except subprocess.TimeoutExpired:
+        print("[SecurityMode] ⚠️ Nuclei scan timed out")
+        return []
+    except Exception as e:
+        print(f"[SecurityMode] ⚠️ Nuclei error: {e}")
+        return []
 # ---------------------------------------------------------------------------
 # Subdomains (unchanged)
 # ---------------------------------------------------------------------------
@@ -286,15 +340,16 @@ def _scrape_linkedin(domain):
             break
         except Exception:
             pass
-    return profiles if profiles else ["No LinkedIn profiles found on the homepage."]
+    return profiles
 
 
 # ---------------------------------------------------------------------------
 # PDF generation (extended with new sections)
 # ---------------------------------------------------------------------------
-def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_breaches,
-                  domain_breach_count, domain_breach_names, directories,
-                  nmap_data, nikto_findings, ssl_info):
+def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
+                  email_breaches, domain_breach_count, domain_breach_names,
+                  directories, nmap_data, nikto_findings, ssl_info,
+                  nuclei_findings=None):
     from fpdf import FPDF
 
     desktop = Path.home() / "Desktop"
@@ -306,7 +361,7 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_bre
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Courier", size=12)
-    pdf.cell(0, 10, "CYBER RECONNAISSANCE REPORT", ln=True, align="C")
+    pdf.cell(0, 10, "SECURITY ASSESSMENT REPORT", ln=True, align="C")
     pdf.cell(0, 8, f"Target: {target}", ln=True, align="C")
     pdf.cell(0, 8, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
     pdf.ln(5)
@@ -420,8 +475,21 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_bre
         pdf.set_font("Courier", size=10)
     pdf.ln(5)
 
-    # 8. Executive Summary
-    pdf.cell(0, 7, "[8] EXECUTIVE SUMMARY", ln=True)
+    # 8. Nuclei CVE findings
+    pdf.cell(0, 7, "[8] NUCLEI CVE FINDINGS", ln=True)
+    pdf.ln(2)
+    if not nuclei_findings:
+        pdf.cell(0, 6, "No CVE findings or Nuclei not available.", ln=True)
+    else:
+        for finding in nuclei_findings[:20]:
+            safe = finding.encode("latin-1", errors="replace").decode("latin-1")
+            pdf.set_font("Courier", size=8)
+            pdf.multi_cell(0, 5, safe)
+        pdf.set_font("Courier", size=10)
+    pdf.ln(5)
+
+    # 9. Executive Summary
+    pdf.cell(0, 7, "[9] EXECUTIVE SUMMARY", ln=True)
     pdf.ln(2)
     total_ports = sum(len(h["open_ports"]) for h in nmap_data.get("hosts", []))
     summary = (
@@ -432,6 +500,7 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_bre
         f"Domain breaches: {domain_breach_count}\n"
         f"Sensitive paths: {len(directories)}\n"
         f"Open ports: {total_ports}\n"
+        f"Nuclei findings: {len(nuclei_findings)}\n"
         f"Web findings: {len(nikto_findings)}\n"
         f"SSL valid until: {ssl_info['expires'] if ssl_info else 'unknown'}\n\n"
         "Full details are provided in the sections above. "
@@ -443,11 +512,12 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_bre
 
     # Spoken summary
     spoken = (
-        f"Full cyber recon on {target} complete. "
+        f"Security assessment on {target} complete. "
         f"Found {len(subdomains)} subdomains, {len(linkedin)} employee profiles, "
         f"{len(emails)} emails ({sum(1 for e in emails if email_breaches.get(e))} breached), "
         f"{domain_breach_count} domain breaches, {len(directories)} sensitive paths, "
-        f"{total_ports} open ports, and {len(nikto_findings)} web findings. "
+        f"{total_ports} open ports, {len(nikto_findings)} web findings, "
+        f"and {len(nuclei_findings)} CVE findings. "
         f"Comprehensive report saved to your desktop."
     )
 
@@ -457,7 +527,7 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses, email_bre
 # ---------------------------------------------------------------------------
 # Main tool entry point
 # ---------------------------------------------------------------------------
-def cyber_recon(parameters: dict, player=None) -> str:
+def security_mode(parameters: dict, player=None) -> str:
     target = (parameters or {}).get("target", "").strip()
     if not target:
         return "No target specified."
@@ -483,10 +553,13 @@ def cyber_recon(parameters: dict, player=None) -> str:
     nikto_findings = _parse_nikto(nikto_raw)
     ssl_info = _check_ssl(domain)
 
+    nuclei_findings = _run_nuclei(domain)
+    nuclei_findings = nuclei_findings or []
+
     filepath, spoken = _generate_pdf(
         domain, subdomains, linkedin, emails, email_guesses, email_breaches,
         domain_breach_count, domain_breach_names, directories,
-        nmap_data, nikto_findings, ssl_info
+        nmap_data, nikto_findings, ssl_info, nuclei_findings
     )
 
     return spoken + "\n" + str(filepath)
