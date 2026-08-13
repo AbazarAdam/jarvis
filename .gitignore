@@ -32,3 +32,6 @@ memory/long_term.json
 
 # Large external binaries
 tools/nuclei/nuclei.exe
+
+# User shortcuts
+memory/shortcuts.json
