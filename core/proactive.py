@@ -1,6 +1,7 @@
 """
 core/proactive.py — JARVIS Proactive Assistance Engine
-Checks system health and time context, then speaks a suggestion when triggered.
+Runs in the background and speaks system/time alerts via local TTS.
+Can be toggled on/off from the UI.
 """
 
 import threading
@@ -10,11 +11,13 @@ from datetime import datetime
 
 
 class ProactiveAssistant:
-    def __init__(self, speak_callback, ui=None):
-        self.speak_callback = speak_callback
-        self.ui = ui
+    def __init__(self):
+        self.enabled = threading.Event()
+        self.enabled.set()   # default ON
+
         self._running = True
         self._last_triggered = {}
+        self._tts_lock = threading.Lock()
 
         self._thread = threading.Thread(
             target=self._loop,
@@ -24,29 +27,63 @@ class ProactiveAssistant:
         self._thread.start()
         print("[Proactive] 🧠 Assistant started")
 
+    # ------------------------------------------------------------------
+    def set_enabled(self, enabled: bool):
+        if enabled:
+            self.enabled.set()
+            print("[Proactive] ▶ Enabled")
+        else:
+            self.enabled.clear()
+            print("[Proactive] ⏸ Disabled")
+
+    def stop(self):
+        self._running = False
+        print("[Proactive] 🛑 Assistant stopped")
+
+    # ------------------------------------------------------------------
     def _loop(self):
         while self._running:
             try:
-                self._check_time_context()
-                self._check_system_health()
+                if self.enabled.is_set():
+                    self._check_time_context()
+                    self._check_system_health()
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
-            time.sleep(120)  # check every 2 minutes
+            time.sleep(120)   # check every 2 minutes
 
     # ------------------------------------------------------------------
-    # Time‑based suggestions
+    def _speak(self, text: str):
+        """Speak locally using pyttsx3 — does NOT touch the Gemini model."""
+        if not self.enabled.is_set():
+            return
+
+        try:
+            import pyttsx3
+        except ImportError:
+            print(f"[Proactive] (no local TTS) {text}")
+            return
+
+        def _run():
+            try:
+                with self._tts_lock:
+                    engine = pyttsx3.init()
+                    engine.say(text)
+                    engine.runAndWait()
+            except Exception as e:
+                print(f"[Proactive] TTS error: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ------------------------------------------------------------------
     def _check_time_context(self):
         hour = datetime.now().hour
 
-        # Morning brief suggestion at 8 AM (once per day)
         if hour == 8 and not self._has_triggered("morning_brief", 86400):
             self._mark("morning_brief")
             self._speak(
                 "Good morning, sir. Would you like me to prepare your morning brief?"
             )
 
-        # Evening wind‑down at 11 PM (once per day)
         elif hour == 23 and not self._has_triggered("evening", 86400):
             self._mark("evening")
             self._speak(
@@ -54,10 +91,7 @@ class ProactiveAssistant:
             )
 
     # ------------------------------------------------------------------
-    # System health alerts
-    # ------------------------------------------------------------------
     def _check_system_health(self):
-        # High CPU
         try:
             cpu = psutil.cpu_percent(interval=1)
             if cpu > 90 and not self._has_triggered("cpu_high", 300):
@@ -69,7 +103,6 @@ class ProactiveAssistant:
         except Exception:
             pass
 
-        # High memory
         try:
             mem = psutil.virtual_memory().percent
             if mem > 90 and not self._has_triggered("mem_high", 300):
@@ -81,7 +114,6 @@ class ProactiveAssistant:
         except Exception:
             pass
 
-        # Low battery (laptops only)
         try:
             battery = psutil.sensors_battery()
             if (
@@ -99,16 +131,6 @@ class ProactiveAssistant:
             pass
 
     # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _speak(self, text: str):
-        """Forward a proactive message to Jarvis's voice output."""
-        try:
-            if self.speak_callback:
-                self.speak_callback(text)
-        except Exception as e:
-            print(f"[Proactive] ⚠️ Speak error: {e}")
-
     def _has_triggered(self, key: str, cooldown_seconds: int) -> bool:
         last = self._last_triggered.get(key)
         if last and (time.time() - last) < cooldown_seconds:
@@ -117,7 +139,3 @@ class ProactiveAssistant:
 
     def _mark(self, key: str):
         self._last_triggered[key] = time.time()
-
-    def stop(self):
-        self._running = False
-        print("[Proactive] 🛑 Assistant stopped")

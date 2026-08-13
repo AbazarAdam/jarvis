@@ -1041,6 +1041,7 @@ class MainWindow(QMainWindow):
     _setup_sig = pyqtSignal(str, int)
     _remote_start_signal = pyqtSignal()
     _remote_stop_signal = pyqtSignal()
+    _proactive_toggle_signal = pyqtSignal(bool)
 
     _qr_signal = pyqtSignal(bytes, str, str)
 
@@ -1197,6 +1198,7 @@ class MainWindow(QMainWindow):
 
 
     def _toggle_remote_access(self):
+
         """Toggle ngrok tunnel on/off."""
         if self._remote_active:
             from server import stop_ngrok
@@ -1225,6 +1227,38 @@ class MainWindow(QMainWindow):
                 self._update_remote_btn()
             else:
                 self._log.append_log("ERR: Could not start remote tunnel.")
+
+    def _toggle_proactive(self):
+        self._proactive_enabled = not self._proactive_enabled
+        self._style_proactive_btn()
+        self._proactive_toggle_signal.emit(self._proactive_enabled)
+        self._log.append_log(
+            f"SYS: Proactive assistance {'enabled' if self._proactive_enabled else 'disabled'}."
+        )
+
+    def _style_proactive_btn(self):
+        if self._proactive_enabled:
+            self._proactive_btn.setText("🧠  PROACTIVE: ON")
+            self._proactive_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #00140a; color: {C.GREEN};
+                    border: 1px solid {C.GREEN}; border-radius: 3px; padding: 4px;
+                }}
+                QPushButton:hover {{
+                    background: #001f10;
+                }}
+            """)
+        else:
+            self._proactive_btn.setText("🧠  PROACTIVE: OFF")
+            self._proactive_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #140006; color: {C.RED};
+                    border: 1px solid {C.RED}; border-radius: 3px; padding: 4px;
+                }}
+                QPushButton:hover {{
+                    background: #1f000a;
+                }}
+            """)
 
     def _update_remote_btn(self):
         if self._remote_active:
@@ -1460,6 +1494,16 @@ class MainWindow(QMainWindow):
         self._remote_btn.clicked.connect(self._toggle_remote_access)
         self._update_remote_btn()
         lay.addWidget(self._remote_btn)
+
+        # Proactive assistance toggle
+        self._proactive_enabled = True
+        self._proactive_btn = QPushButton("🧠  PROACTIVE: ON")
+        self._proactive_btn.setFixedHeight(34)
+        self._proactive_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._proactive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._proactive_btn.clicked.connect(self._toggle_proactive)
+        self._style_proactive_btn()
+        lay.addWidget(self._proactive_btn)
 
         for txt, col in [
             ("AI CORE\nACTIVE",     C.GREEN),

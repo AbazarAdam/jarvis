@@ -640,10 +640,13 @@ class JarvisLive:
             self._loop
         )
 
+
+
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -1233,8 +1236,11 @@ def main():
         from core.proactive import ProactiveAssistant
 
         # Start proactive assistance after Jarvis begins running
-        proactive = ProactiveAssistant(jarvis.speak, ui)
+        proactive = ProactiveAssistant()
         jarvis.proactive = proactive
+
+        # Connect the UI toggle button to the proactive engine
+        ui._win._proactive_toggle_signal.connect(proactive.set_enabled)
 
         #threading.Thread(target=_setup_local, daemon=True).start()
         try:
