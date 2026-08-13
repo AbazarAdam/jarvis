@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from actions.cyber_recon import (
+from actions.security_mode import (
     _parse_nmap_text,
     _parse_nikto,
     _enumerate_subdomains,
