@@ -1199,6 +1199,12 @@ def main():
             except Exception:
                 pass
 
+        from core.proactive import ProactiveAssistant
+
+        # Start proactive assistance after Jarvis begins running
+        proactive = ProactiveAssistant(jarvis.speak, ui)
+        jarvis.proactive = proactive
+
         #threading.Thread(target=_setup_local, daemon=True).start()
         try:
             asyncio.run(jarvis.run())
