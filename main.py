@@ -437,7 +437,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "dev_agent",
-        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, generates tests, CI/CD, Dockerfile, README, initialises Git, opens VSCode, runs and fixes errors.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
