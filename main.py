@@ -678,8 +678,11 @@ class JarvisLive:
     def set_speaking(self, value: bool):
         with self._speaking_lock:
             prev = self._is_speaking
+            if prev == value:
+                return
             self._is_speaking = value
-        # Log speaking state transitions and queue sizes for debugging interactive loop issues.
+
+        # Log only real transitions
         try:
             out_q = self.out_queue.qsize() if self.out_queue else 'N/A'
             in_q = self.audio_in_queue.qsize() if self.audio_in_queue else 'N/A'
@@ -687,6 +690,7 @@ class JarvisLive:
             print(f"[JARVIS] set_speaking: {prev} -> {value} out_q={out_q} in_q={in_q} dropped={dropped}")
         except Exception:
             pass
+
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
@@ -1093,7 +1097,7 @@ class JarvisLive:
                 # logs and can interrupt the audio pipeline).
                 loop.call_soon_threadsafe(
                     self._enqueue_out,
-                    {"data": data, "mime_type": "audio/pcm"}
+                    {"data": data, "mime_type": "audio/pcm;rate=16000"}
                 )
 
         try:
