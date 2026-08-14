@@ -375,18 +375,62 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "code_helper",
-        "description": "Writes, edits, explains, runs, or builds code files.",
+        "description": "Writes, edits, explains, runs, builds, analyzes, tests, and fixes code. Supports Git status/diff/commit.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "write | edit | explain | run | build | auto (default: auto)"},
-                "description": {"type": "STRING", "description": "What the code should do or what change to make"},
-                "language":    {"type": "STRING", "description": "Programming language (default: python)"},
-                "output_path": {"type": "STRING", "description": "Where to save the file"},
-                "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
-                "code":        {"type": "STRING", "description": "Raw code string for explain"},
-                "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
-                "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},
+                "action": {
+                    "type": "STRING",
+                    "description": "write | read | edit | explain | run | build | optimize | analyze | generate_tests | test | git_status | git_diff | git_commit | self_fix | screen_debug | auto"
+                },
+                "description": {
+                    "type": "STRING",
+                    "description": "What the code should do, what change to make, or what problem to analyze"
+                },
+                "language": {
+                    "type": "STRING",
+                    "description": "Programming language (default: python)"
+                },
+                "output_path": {
+                    "type": "STRING",
+                    "description": "Where to save the generated file"
+                },
+                "file_path": {
+                    "type": "STRING",
+                    "description": "Path to existing file for edit/explain/run/build/analyze/test/self_fix"
+                },
+                "code": {
+                    "type": "STRING",
+                    "description": "Raw code string for explain/optimize/edit without a file"
+                },
+                "args": {
+                    "type": "STRING",
+                    "description": "CLI arguments for run/build"
+                },
+                "timeout": {
+                    "type": "INTEGER",
+                    "description": "Execution timeout in seconds (default: 30)"
+                },
+                "line_start": {
+                    "type": "INTEGER",
+                    "description": "Start line for line-aware edit"
+                },
+                "line_end": {
+                    "type": "INTEGER",
+                    "description": "End line for line-aware edit"
+                },
+                "new_content": {
+                    "type": "STRING",
+                    "description": "Replacement content for line-aware edit"
+                },
+                "attempts": {
+                    "type": "INTEGER",
+                    "description": "Number of self-fix attempts (default 3)"
+                },
+                "message": {
+                    "type": "STRING",
+                    "description": "Git commit message for git_commit"
+                }
             },
             "required": ["action"]
         }
