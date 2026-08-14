@@ -1,86 +1,142 @@
 """
-actions/reminder.py — JARVIS Alarm and Timer System
-Supports one-time alarms (date/time) and countdown timers (seconds/minutes).
-Plays an alarm sound and shows a popup notification until acknowledged.
+actions/reminder.py — JARVIS Persistent Alarm and Timer System
+
+Supports:
+  - timers via seconds / minutes
+  - alarms via date / time (including "today", "tomorrow", "now+1min")
+
+Alarms are created as Windows scheduled tasks, so they keep working even
+after JARVIS is closed.
 """
 
-import ctypes
-import threading
-import time
-import winsound
-from datetime import datetime, timedelta
+import subprocess
+import uuid
 from pathlib import Path
+from datetime import datetime, timedelta
+
+
+BASE_DIR     = Path(__file__).resolve().parent.parent
+REMINDER_DIR = BASE_DIR / "logs" / "reminders"
 
 
 def _parse_reminder(params: dict) -> datetime:
     """Determine trigger time from parameters."""
-    # Timer: seconds or minutes
+    now = datetime.now()
+
+    # 1) Timer
     seconds = params.get("seconds")
     minutes = params.get("minutes")
     if seconds is not None or minutes is not None:
         try:
             secs = int(seconds or 0) + int(minutes or 0) * 60
-            return datetime.now() + timedelta(seconds=secs)
+            return now + timedelta(seconds=secs)
         except Exception:
             pass
 
-    # Alarm: date and time
-    date_str = params.get("date", "")
-    time_str = params.get("time", "")
-    if not date_str or not time_str:
+    # 2) Alarm
+    date_str = str(params.get("date", "")).strip().lower()
+    time_str = str(params.get("time", "")).strip()
+
+    if not time_str:
         raise ValueError("Provide either seconds/minutes for a timer, or date and time for an alarm.")
 
-    try:
-        return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-    except Exception:
-        try:
-            return datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %H:%M")
-        except Exception as e:
-            raise ValueError(f"Invalid date/time format: {e}")
-
-
-def _play_alarm_and_notify(message: str):
-    """Show a popup and play a proper Windows alarm sound until dismissed."""
-    sound_paths = [
-        Path(r"C:\Windows\Media\Alarm01.wav"),
-        Path(r"C:\Windows\Media\Alarm02.wav"),
-        Path(r"C:\Windows\Media\Alarm03.wav"),
-        Path(r"C:\Windows\Media\Alarm04.wav"),
-    ]
-    sound_file = next((p for p in sound_paths if p.exists()), None)
-
-    if sound_file:
-        winsound.PlaySound(
-            str(sound_file),
-            winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP
-        )
+    # Determine date
+    if date_str in ("", "today", "[today]"):
+        d = now.date()
+    elif date_str in ("tomorrow", "[tomorrow]"):
+        d = now.date() + timedelta(days=1)
     else:
-        # Fallback: repeated beep
-        for _ in range(20):
-            winsound.Beep(1000, 300)
-            time.sleep(0.3)
-        return
+        # Try common date formats
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                d = datetime.strptime(date_str, fmt).date()
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"Invalid date: {date_str}")
 
-    # Popup that stops the alarm when dismissed
+    # Determine time
+    time_clean = time_str.replace("[", "").replace("]", "")
+    time_clean = time_clean.replace("now+", "")
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p"):
+        try:
+            t = datetime.strptime(time_clean, fmt).time()
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError(f"Invalid time: {time_str}")
+
+    trigger = datetime.combine(d, t)
+
+    # If the trigger is already past, use tomorrow
+    if trigger <= now:
+        trigger += timedelta(days=1)
+
+    return trigger
+
+
+def _create_alert_script(message: str, reminder_id: str) -> Path:
+    """Write a PowerShell script that shows a popup and plays an alarm sound."""
+    REMINDER_DIR.mkdir(parents=True, exist_ok=True)
+    script = REMINDER_DIR / f"alert_{reminder_id}.ps1"
+
+    safe_message = message.replace("'", "''")
+
+    script_content = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$alarm = [System.Media.SoundPlayer]::new("C:\\Windows\\Media\\Alarm01.wav")
+$alarm.PlayLooping()
+
+[System.Windows.Forms.MessageBox]::Show('{safe_message}', 'JARVIS Reminder', 0, 64)
+
+$alarm.Stop()
+"""
+
+    script.write_text(script_content, encoding="utf-8")
+    return script
+
+
+def _create_scheduled_task(trigger_time: datetime, message: str) -> str:
+    """Create a Windows scheduled task via PowerShell for a specific time."""
+    reminder_id = uuid.uuid4().hex[:8]
+    script_path = _create_alert_script(message, reminder_id)
+
+    task_name = f"JARVIS Reminder {reminder_id}"
+
+    iso_time = trigger_time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    ps_command = f"""
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-ExecutionPolicy Bypass -WindowStyle Hidden -File "{script_path}"'
+$trigger = New-ScheduledTaskTrigger -Once -At '{iso_time}'
+Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger -Force
+"""
+
     try:
-        MB_OK = 0x0
-        MB_ICONINFORMATION = 0x40
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            message,
-            "JARVIS Reminder",
-            MB_OK | MB_ICONINFORMATION,
+        proc = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ps_command,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
-    finally:
-        winsound.PlaySound(None, winsound.SND_PURGE)
-
-
-def _worker(trigger_time: datetime, message: str):
-    """Wait until trigger time, then alert."""
-    now = datetime.now()
-    if trigger_time > now:
-        time.sleep((trigger_time - now).total_seconds())
-    _play_alarm_and_notify(message)
+        if proc.returncode == 0:
+            return (
+                f"Reminder set for {trigger_time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"(Task: {task_name}). It will work even if JARVIS is closed."
+            )
+        return f"Reminder creation failed: {proc.stderr.strip() or proc.stdout.strip()}"
+    except Exception as e:
+        return f"Reminder creation failed: {e}"
 
 
 def reminder(parameters: dict, response=None, player=None, session_memory=None) -> str:
@@ -91,26 +147,20 @@ def reminder(parameters: dict, response=None, player=None, session_memory=None) 
         message   : string, the reminder message
         seconds   : int, countdown seconds (for timer)
         minutes   : int, countdown minutes (for timer)
-        date      : string, date YYYY-MM-DD (for alarm)
-        time      : string, time HH:MM (for alarm)
+        date      : string, date YYYY-MM-DD or "today" / "tomorrow"
+        time      : string, time HH:MM 24h or HH:MM AM/PM
     """
-    params = parameters or {}
+    params  = parameters or {}
     message = params.get("message", "Time's up!")
+
     try:
         trigger_time = _parse_reminder(params)
     except Exception as e:
         return str(e)
 
-    if trigger_time <= datetime.now():
-        trigger_time = datetime.now() + timedelta(seconds=1)
-
-    threading.Thread(
-        target=_worker,
-        args=(trigger_time, message),
-        daemon=True,
-    ).start()
+    result = _create_scheduled_task(trigger_time, message)
 
     if player:
-        player.write_log(f"Reminder set for {trigger_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        player.write_log(result)
 
-    return f"Reminder set for {trigger_time.strftime('%Y-%m-%d %H:%M:%S')}."
+    return result
