@@ -12,6 +12,7 @@ from actions.morning_brief import morning_brief
 from actions.security_mode import security_mode
 from actions.screen_processor import screen_process, camera_stream
 from core.audit import log_action
+from core.self_heal import self_heal
 
 import requests
 import sounddevice as sd
@@ -166,6 +167,24 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "self_heal",
+        "description": (
+            "Runs the self‑healing system to fix recent errors automatically. "
+            "Requires explicit confirmation before modifying any files. "
+            "Use when the user asks to 'heal yourself', 'fix the last error', or 'repair the project'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "confirmed": {
+                    "type": "STRING",
+                    "description": "Set to 'yes' to confirm the self‑heal operation."
+                }
+            },
+            "required": []
         }
     },
     {
@@ -1001,7 +1020,16 @@ class JarvisLive:
                     id=fc.id, name=name,
                     response={"result": "ok", "silent": True}
                 )
-            
+
+            elif name == "self_heal":
+                self._start_background_tool("self_heal", args, self_heal)
+                self._announce_local(
+                    "Self‑healing started in background, sir. I will notify you when complete."
+                )
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "ok", "silent": True}
+                )
 
             elif name == "web_search":
                 try:

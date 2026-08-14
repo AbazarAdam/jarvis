@@ -17,7 +17,10 @@ def _get_base_dir() -> Path:
 BASE_DIR     = _get_base_dir()
 API_KEY_PATH = BASE_DIR / "config" / "api_keys.json"
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -41,17 +44,23 @@ class GroqClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": GROQ_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        resp = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-        raise RuntimeError(f"Groq error {resp.status_code}: {resp.text[:200]}")
+        last_err = None
+        for model in GROQ_MODELS:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            try:
+                resp = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                last_err = f"Groq {model} error {resp.status_code}: {resp.text[:100]}"
+            except Exception as e:
+                last_err = str(e)
+        raise RuntimeError(last_err or "Groq failed")
 
 
 # Lazy proxy so importing this module never requires a key yet.

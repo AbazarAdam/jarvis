@@ -173,25 +173,25 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
     ) -> str:
-
-        # Try Groq first (fast/free and generous)
+        # 1. Try Groq first
         try:
-            result = groq_client.chat(messages, temperature=temperature)
+            result = groq_client.chat(messages, temperature=temperature, max_tokens=max_tokens)
             if result:
                 logger.info("[LLM] ✓ Groq success")
                 return result
         except Exception as e:
             logger.warning(f"[LLM] Groq failed: {e}")
-        
+
+        # 2. Try a specific requested OpenRouter model if provided
         if model and not self._is_rate_limited(model):
             result = self._call(model, messages, max_tokens, temperature, response_format)
             if result:
                 return result
             logger.info(
-                f"[OpenRouter] Requested model failed, "
-                f"falling back to pool: {model}"
+                f"[OpenRouter] Requested model failed, falling back to pool: {model}"
             )
 
+        # 3. Try the OpenRouter pool
         for m in pool:
             if self._is_rate_limited(m):
                 continue
@@ -201,9 +201,31 @@ class OpenRouterClient:
                 logger.info(f"[OpenRouter] ✓ Success: {m}")
                 return result
 
+        # 4. Last resort: Gemini text model
+        try:
+            import google.generativeai as genai
+
+            cfg = {}
+            with open(API_KEY_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            genai.configure(api_key=cfg.get("gemini_api_key", ""))
+
+            model_gemini = genai.GenerativeModel("gemini-2.5-flash")
+            prompt = "\n".join(
+                f"{m['role']}: {m['content']}"
+                for m in messages
+                if isinstance(m.get("content"), str)
+            )
+            response = model_gemini.generate_content(prompt)
+            if response.text:
+                logger.info("[LLM] ✓ Gemini fallback success")
+                return response.text.strip()
+        except Exception as e:
+            logger.warning(f"[LLM] Gemini fallback failed: {e}")
+
         raise RuntimeError(
-            "[OpenRouter] All models failed or are rate-limited. "
-            "Check your API key and network connection."
+            "[LLM] All providers failed (Groq, OpenRouter, Gemini). "
+            "Check API keys and rate limits."
         )
 
     def chat(
