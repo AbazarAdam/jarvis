@@ -1060,6 +1060,13 @@ class JarvisLive:
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
 
+        # Always log Jarvis's answer when a tool returns a readable result
+        if isinstance(result, str) and result.strip():
+            try:
+                self.ui.write_log(f"Jarvis: {result[:200]}")
+            except Exception:
+                pass
+
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -1134,29 +1141,30 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
 
-                            if sc.turn_complete:
-                                print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
-                                self.set_speaking(False)
+                        if sc.turn_complete:
+                            print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
+                            self.set_speaking(False)
 
-                                full_in = " ".join(in_buf).strip()
-                                if full_in:
-                                    self.ui.write_log(f"You: {full_in}")
-                                in_buf = []
+                            full_in = " ".join(in_buf).strip()
+                            if full_in:
+                                self.ui.write_log(f"You: {full_in}")
+                            in_buf = []
 
-                                full_out = " ".join(out_buf).strip()
-                                # Store for remote dashboard
-                                with self._response_lock:
-                                    self._last_response = full_out
-                                if full_out:
-                                    self.ui.write_log(f"Jarvis: {full_out}")
-                                out_buf = []
+                            full_out = " ".join(out_buf).strip()
+                            with self._response_lock:
+                                self._last_response = full_out
+                            if full_out:
+                                self.ui.write_log(f"Jarvis: {full_out}")
+                            else:
+                                self.ui.write_log("Jarvis: (voice response)")
+                            out_buf = []
 
-                                if full_in and len(full_in) > 5:
-                                    threading.Thread(
-                                        target=_update_memory_async,
-                                        args=(full_in, full_out),
-                                        daemon=True
-                                    ).start()
+                            if full_in and len(full_in) > 5:
+                                threading.Thread(
+                                    target=_update_memory_async,
+                                    args=(full_in, full_out),
+                                    daemon=True
+                                ).start()
 
                     if response.tool_call:
                         fn_responses = []
