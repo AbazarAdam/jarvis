@@ -661,26 +661,9 @@ class JarvisLive:
         except Exception:
             return text.strip()
 
-    def _audio_rms(self, indata) -> float:
-        """Compute RMS volume of incoming audio, normalized 0..1."""
-        try:
-            import numpy as np
-            mono = indata[:, 0] if indata.ndim > 1 else indata
-            rms = float(np.sqrt(np.mean((mono.astype(np.float32) / 32768.0) ** 2)))
-            return rms
-        except Exception:
-            return 0.0
 
-    async def _send_turn_complete(self):
-        """Force Gemini to process the audio it has already received."""
-        try:
-            if self.session:
-                await self.session.send_client_content(
-                    turns={"parts": [{"text": " "}]},
-                    turn_complete=True,
-                )
-        except Exception as e:
-            print(f"[JARVIS] VAD turn complete failed: {e}")
+
+
 
     def get_last_response(self) -> str:
         with self._response_lock:
@@ -1121,6 +1104,12 @@ class JarvisLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
+            # Remove any VAD-specific keys before sending
+            if isinstance(msg, dict):
+                msg = {
+                    "data": msg.get("data", b""),
+                    "mime_type": msg.get("mime_type", "audio/pcm;rate=16000"),
+                }
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
@@ -1131,23 +1120,6 @@ class JarvisLive:
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted:
-                # Voice Activity Detection: track speech/silence
-                now = time.time()
-                rms = self._audio_rms(indata)
-
-                if rms > 0.010:
-                    self._last_speech_time = now
-                    self._turn_complete_sent = False
-                elif (
-                    not self._turn_complete_sent
-                    and self._last_speech_time
-                    and (now - self._last_speech_time) > 0.7
-                ):
-                    self._turn_complete_sent = True
-                    asyncio.run_coroutine_threadsafe(
-                        self._send_turn_complete(), loop
-                    )
-
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self._enqueue_out,
@@ -1211,11 +1183,8 @@ class JarvisLive:
                             full_out = " ".join(out_buf).strip()
                             with self._response_lock:
                                 self._last_response = full_out
-                            if full_out:
-                                self.ui.write_log(f"Jarvis: {full_out}")
-                            else:
-                                self.ui.write_log("Jarvis: (voice response)")
-                            out_buf = []
+                                if full_out:
+                                    self.ui.write_log(f"Jarvis: {full_out}")
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
