@@ -51,17 +51,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: jarvis:ci
-          load: true
+        run: docker build -t jarvis:ci .
 
       - name: Run smoke test in container
-        run: |
-          docker run --rm jarvis:ci pytest -q tests/test_more_helpers.py
+        run: docker run --rm jarvis:ci pytest -q tests/test_more_helpers.py
