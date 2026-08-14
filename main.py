@@ -230,15 +230,17 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "reminder",
-        "description": "Sets a timed reminder using Windows Task Scheduler.",
+        "description": "Sets an alarm or timer. For a timer, pass seconds or minutes. For an alarm, pass date and time.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
+                "message": {"type": "STRING", "description": "Reminder message text"},
+                "seconds": {"type": "INTEGER", "description": "Countdown seconds for a timer"},
+                "minutes": {"type": "INTEGER", "description": "Countdown minutes for a timer"},
+                "date": {"type": "STRING", "description": "Date for an alarm, YYYY-MM-DD"},
+                "time": {"type": "STRING", "description": "Time for an alarm, HH:MM 24h"}
             },
-            "required": ["date", "time", "message"]
+            "required": ["message"]
         }
     },
     {
@@ -713,6 +715,9 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         log_action(name, args, status="started")
 
+        # Ensure result always exists, even for early returns
+        result = "Done."
+
         self.ui.set_state("THINKING")
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -731,7 +736,7 @@ class JarvisLive:
             )
 
         loop   = asyncio.get_event_loop()
-        result = "Done."
+        
         # Permission manager: require confirmation for dangerous actions
         dangerous_actions = DANGEROUS_TOOL_ACTIONS.get(name, set())
         action_value = args.get("action", "").lower()

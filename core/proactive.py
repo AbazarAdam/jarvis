@@ -12,8 +12,7 @@ from datetime import datetime
 
 class ProactiveAssistant:
     def __init__(self):
-        self.enabled = threading.Event()
-        self.enabled.set()   # default ON
+        self.enabled = threading.Event()   # default OFF (unset)
 
         self._running = True
         self._last_triggered = {}

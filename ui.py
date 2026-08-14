@@ -1496,7 +1496,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._remote_btn)
 
         # Proactive assistance toggle
-        self._proactive_enabled = True
+        self._proactive_enabled = False
         self._proactive_btn = QPushButton("🧠  PROACTIVE: ON")
         self._proactive_btn.setFixedHeight(34)
         self._proactive_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
