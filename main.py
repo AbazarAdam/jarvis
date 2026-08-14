@@ -6,6 +6,7 @@ import re
 import traceback
 import importlib.util
 import uuid
+import time
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
@@ -639,6 +640,8 @@ class JarvisLive:
         self.background_tasks = {}
         self._loop          = None
         self._is_speaking   = False
+        self._last_speech_time = 0.0
+        self._turn_complete_sent = False
         self._speaking_lock = threading.Lock()
         # Counter for dropped audio frames from the input callback
         self._dropped_frames = 0
@@ -658,6 +661,26 @@ class JarvisLive:
         except Exception:
             return text.strip()
 
+    def _audio_rms(self, indata) -> float:
+        """Compute RMS volume of incoming audio, normalized 0..1."""
+        try:
+            import numpy as np
+            mono = indata[:, 0] if indata.ndim > 1 else indata
+            rms = float(np.sqrt(np.mean((mono.astype(np.float32) / 32768.0) ** 2)))
+            return rms
+        except Exception:
+            return 0.0
+
+    async def _send_turn_complete(self):
+        """Force Gemini to process the audio it has already received."""
+        try:
+            if self.session:
+                await self.session.send_client_content(
+                    turns={"parts": [{"text": " "}]},
+                    turn_complete=True,
+                )
+        except Exception as e:
+            print(f"[JARVIS] VAD turn complete failed: {e}")
 
     def get_last_response(self) -> str:
         with self._response_lock:
@@ -1108,12 +1131,24 @@ class JarvisLive:
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted:
+                # Voice Activity Detection: track speech/silence
+                now = time.time()
+                rms = self._audio_rms(indata)
+
+                if rms > 0.010:
+                    self._last_speech_time = now
+                    self._turn_complete_sent = False
+                elif (
+                    not self._turn_complete_sent
+                    and self._last_speech_time
+                    and (now - self._last_speech_time) > 0.7
+                ):
+                    self._turn_complete_sent = True
+                    asyncio.run_coroutine_threadsafe(
+                        self._send_turn_complete(), loop
+                    )
+
                 data = indata.tobytes()
-                # Use a threadsafe call to a small synchronous helper which
-                # attempts a non-blocking put and drops the frame if the
-                # queue is full. This prevents uncaught QueueFull exceptions
-                # inside the sounddevice callback (which otherwise flood the
-                # logs and can interrupt the audio pipeline).
                 loop.call_soon_threadsafe(
                     self._enqueue_out,
                     {"data": data, "mime_type": "audio/pcm;rate=16000"}
@@ -1287,7 +1322,7 @@ class JarvisLive:
                     # Increase out_queue size to buffer more microphone frames and
                     # avoid backpressure causing the InputStream callback to hit
                     # QueueFull frequently. 50 is a reasonable middle ground.
-                    self.out_queue      = asyncio.Queue(maxsize=50)
+                    self.out_queue = asyncio.Queue()
 
                     print("[JARVIS] ✅ Connected.")
                     self.ui.set_state("LISTENING")
