@@ -4,6 +4,7 @@ import json
 import sys
 import traceback
 import importlib.util
+import uuid
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
@@ -164,6 +165,15 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["app_name"]
+        }
+    },
+    {
+        "name": "background_status",
+        "description": "Checks the status of background tasks such as security scans or briefs.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": []
         }
     },
     {
@@ -562,6 +572,7 @@ class JarvisLive:
         self.session        = None
         self.audio_in_queue = None
         self.out_queue      = None
+        self.background_tasks = {}
         self._loop          = None
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
@@ -573,6 +584,7 @@ class JarvisLive:
 
         self._last_response = ""
         self._response_lock = threading.Lock()
+        self.background_tasks = {}
 
 
 
@@ -642,7 +654,38 @@ class JarvisLive:
             self._loop
         )
 
+    def _announce_local(self, text: str = ""):
+        """Play a short beep when a background task completes."""
+        def _run():
+            try:
+                import winsound
+                winsound.Beep(1000, 200)
+                winsound.Beep(1200, 200)
+            except Exception:
+                pass
+        threading.Thread(target=_run, daemon=True).start()
 
+    def _start_background_tool(self, tool_name: str, args: dict, func) -> str:
+        task_id = uuid.uuid4().hex[:8]
+        self.background_tasks[task_id] = {
+            "tool": tool_name,
+            "status": "running",
+            "result": None,
+        }
+        def wrapper():
+            try:
+                result = func(parameters=args, player=self.ui)
+                self.background_tasks[task_id]["status"] = "completed"
+                self.background_tasks[task_id]["result"] = result
+                self._announce_local(f"{tool_name} completed, sir.")
+            except Exception as e:
+                self.background_tasks[task_id]["status"] = "failed"
+                self.background_tasks[task_id]["result"] = str(e)
+                self._announce_local(f"{tool_name} failed, sir.")
+                from core.audit import log_action
+                log_action(tool_name, args, result=str(e), status="failed")
+        threading.Thread(target=wrapper, daemon=True).start()
+        return task_id
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -736,7 +779,7 @@ class JarvisLive:
             )
 
         loop   = asyncio.get_event_loop()
-        
+
         # Permission manager: require confirmation for dangerous actions
         dangerous_actions = DANGEROUS_TOOL_ACTIONS.get(name, set())
         action_value = args.get("action", "").lower()
@@ -789,6 +832,25 @@ class JarvisLive:
                 )
                 result = r or "Done."
 
+            elif name == "background_status":
+                if not self.background_tasks:
+                    result = "No background tasks running, sir."
+                else:
+                    lines = []
+                    for task_id, info in self.background_tasks.items():
+                        tool   = info.get("tool", "unknown")
+                        status = info.get("status", "running")
+                        detail = info.get("result") or ""
+
+                        if status == "failed":
+                            short = detail[:300] if detail else "Unknown error"
+                            lines.append(f"{tool}: FAILED — {short}")
+                        elif status == "completed":
+                            short = detail[:300] if detail else "Done"
+                            lines.append(f"{tool}: completed — {short}")
+                        else:
+                            lines.append(f"{tool}: running")
+                    result = "Background tasks:\n" + "\n".join(lines)
 
             elif name == "screen_process":
                 threading.Thread(
@@ -798,6 +860,17 @@ class JarvisLive:
                     daemon=True
                 ).start()
                 result = "Vision module activated. Stay completely silent — vision module will speak directly."
+
+            elif name == "security_mode":
+                from actions.security_mode import security_mode as sm
+                self._start_background_tool("security_mode", args, sm)
+                self._announce_local(
+                    "Security assessment started in background, sir. I will notify you when complete."
+                )
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "ok", "silent": True}
+                )
 
             elif name == "camera_stream":
                 threading.Thread(
@@ -824,45 +897,56 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "dev_agent":
-                r = await self._run_cancellable(lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                from actions.dev_agent import dev_agent as da
+                self._start_background_tool("dev_agent", args, da)
+                self._announce_local(
+                    "Development agent started in background, sir. I will notify you when complete."
+                )
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "ok", "silent": True}
+                )
 
 
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
-                priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
-                priority = priority_map.get(args.get("priority", "normal").lower(), TaskPriority.NORMAL)
-                task_id = get_queue().submit(goal=args.get("goal", ""), priority=priority, speak=None)
 
-                # Wait for completion or interrupt
-                start = asyncio.get_event_loop().time()
-                while True:
-                    if self.interrupt_flag.is_set():
-                        self.interrupt_flag.clear()
-                        get_queue().cancel(task_id)
-                        self.set_speaking(False)
-                        if not self.ui.muted:
-                            self.ui.set_state("LISTENING")
-                        print("[JARVIS] ⏹ Agent task interrupted")
-                        return types.FunctionResponse(
-                            id=fc.id, name=name,
-                            response={"result": "Interrupted by user.", "silent": True}
-                        )
+                def _run_agent_task(parameters, player=None):
+                    priority_map = {
+                        "low": TaskPriority.LOW,
+                        "normal": TaskPriority.NORMAL,
+                        "high": TaskPriority.HIGH,
+                    }
+                    priority = priority_map.get(
+                        parameters.get("priority", "normal").lower(),
+                        TaskPriority.NORMAL,
+                    )
+                    task_id = get_queue().submit(
+                        goal=parameters.get("goal", ""),
+                        priority=priority,
+                        speak=None,
+                    )
+                    import time as _time
+                    while True:
+                        status = get_queue().get_status(task_id)
+                        if status and status["status"] in ("completed", "failed", "cancelled"):
+                            break
+                        _time.sleep(1)
+                    final_status = get_queue().get_status(task_id)
+                    return (
+                        final_status.get("result")
+                        or final_status.get("error")
+                        or "Done."
+                    )
 
-                    status = get_queue().get_status(task_id)
-                    if status and status["status"] in ("completed", "failed", "cancelled"):
-                        break
-                    if asyncio.get_event_loop().time() - start > 120:
-                        result = "Task timed out, sir."
-                        break
-                    await asyncio.sleep(0.5)
-
-                final_status = get_queue().get_status(task_id)
-                result = (final_status.get("result") or final_status.get("error") or "Done, sir.") if final_status else "Task finished."
+                self._start_background_tool("agent_task", args, _run_agent_task)
+                self._announce_local(
+                    "Agent task started in background, sir. I will notify you when complete."
+                )
                 return types.FunctionResponse(
                     id=fc.id, name=name,
-                    response={"result": result}
-                )  
+                    response={"result": "ok", "silent": True}
+                )
             
 
             elif name == "web_search":
@@ -912,12 +996,6 @@ class JarvisLive:
                     self._last_response = result.split('\n')[0]  # first line of report
 
 
-            elif name in ("security_mode", "cyber_recon"):
-                from actions.security_mode import security_mode as sm
-                r = await self._run_cancellable(
-                    lambda: sm(parameters=args, player=self.ui)
-                )
-                result = r or "Security assessment completed."
 
             else:
                 result = f"Unknown tool: {name}"

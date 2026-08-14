@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better layer caching
-COPY requirements-docker.txt requirements-dev.txt ./
+COPY requirements/requirements-docker.txt requirements/requirements-dev.txt ./
 
-RUN pip install --no-cache-dir -r requirements-docker.txt -r requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements/requirements-docker.txt -r requirements/requirements-dev.txt
 
 # Copy the entire project
 COPY . .

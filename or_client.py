@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from groq_client import groq_client
 import requests
 
 logging.basicConfig(level=logging.INFO)
@@ -172,6 +173,16 @@ class OpenRouterClient:
         temperature: float = DEFAULT_TEMPERATURE,
         response_format: Optional[dict] = None,
     ) -> str:
+
+        # Try Groq first (fast/free and generous)
+        try:
+            result = groq_client.chat(messages, temperature=temperature)
+            if result:
+                logger.info("[LLM] ✓ Groq success")
+                return result
+        except Exception as e:
+            logger.warning(f"[LLM] Groq failed: {e}")
+        
         if model and not self._is_rate_limited(model):
             result = self._call(model, messages, max_tokens, temperature, response_format)
             if result:

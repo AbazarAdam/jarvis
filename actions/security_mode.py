@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import datetime
 
 
+
+
 # ---------------------------------------------------------------------------
 # Common sensitive directories
 # ---------------------------------------------------------------------------
@@ -155,6 +157,135 @@ def _check_ssl(target):
                 }
     except Exception:
         return None
+
+def _detect_technologies(target):
+    """Identify web technologies from headers and HTML."""
+    if not target.startswith("http"):
+        target = "https://" + target
+
+    technologies = []
+    try:
+        resp = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        headers = resp.headers
+
+        server = headers.get("Server")
+        if server:
+            technologies.append(f"Server: {server}")
+
+        if "x-powered-by" in headers:
+            technologies.append(f"X-Powered-By: {headers.get('x-powered-by')}")
+
+        if "cf-ray" in headers:
+            technologies.append("Cloudflare detected")
+        if "x-vercel-id" in headers:
+            technologies.append("Vercel detected")
+        if "x-sucuri-id" in headers:
+            technologies.append("Sucuri WAF detected")
+        if "x-aspnet-version" in headers:
+            technologies.append("ASP.NET detected")
+
+        # Basic CMS/framework detection from HTML
+        html = resp.text[:5000].lower()
+        if "wp-content" in html:
+            technologies.append("WordPress")
+        if "joomla" in html:
+            technologies.append("Joomla")
+        if "drupal" in html:
+            technologies.append("Drupal")
+        if "react" in html or "__NEXT_DATA__" in html:
+            technologies.append("React/Next.js")
+        if "vue" in html:
+            technologies.append("Vue.js")
+
+    except Exception as e:
+        technologies.append(f"Could not fetch page: {e}")
+
+    return technologies if technologies else ["No technologies detected."]
+
+
+def _detect_waf(target):
+    """Detect common Web Application Firewalls from headers."""
+    if not target.startswith("http"):
+        target = "https://" + target
+
+    waf = []
+    try:
+        resp = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        headers = resp.headers
+
+        checks = {
+            "Cloudflare": "cf-ray",
+            "Sucuri": "x-sucuri-id",
+            "Akamai": "x-akamai-transformed",
+            "Incapsula": "x-cdn",
+            "AWS WAF": "x-amzn-requestid",
+            "F5 BIG-IP": "x-waf-status",
+        }
+        for name, header in checks.items():
+            if header in headers:
+                waf.append(name)
+
+    except Exception:
+        pass
+
+    return waf if waf else ["No WAF detected."]
+
+
+def _advanced_dns_enum(domain):
+    """Collect DNS records using nslookup (Windows)."""
+    records = []
+    for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
+        try:
+            proc = subprocess.run(
+                ["nslookup", "-type=" + rtype, domain],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            out = proc.stdout.strip()
+            if out:
+                records.append(f"--- {rtype} ---\n{out}")
+        except Exception:
+            pass
+    return records if records else ["No DNS records found."]
+
+
+def _generate_dorks(domain):
+    """Return a list of Google/GitHub dorks for the target."""
+    return [
+        f"site:{domain} filetype:pdf",
+        f"site:{domain} filetype:docx",
+        f"site:{domain} inurl:admin",
+        f"site:{domain} inurl:login",
+        f"site:{domain} intitle:\"index of\"",
+        f"site:{domain} ext:sql | ext:bak | ext:zip",
+        f"site:github.com {domain} password",
+        f"site:github.com {domain} api_key",
+        f"site:github.com {domain} secret",
+        f"site:pastebin.com {domain}",
+    ]
+
+def _run_safe_validation(target):
+    """Run Nmap vuln/auth NSE and Nuclei vulnerability validation."""
+    nmap_exe = _find_tool("nmap.exe")
+    validation = {"nmap_vulns": [], "nuclei_findings": []}
+
+    if nmap_exe:
+        # Non-destructive vulnerability scripts
+        cmd = [nmap_exe, "-sV", "--script", "vuln,auth", "-T4", "--host-timeout", "90s", target]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if proc.returncode == 0:
+                # Extract lines with CVE or vulnerability information
+                for line in proc.stdout.splitlines():
+                    if "CVE" in line or "VULNERABLE" in line or "Exploit" in line:
+                        validation["nmap_vulns"].append(line.strip())
+        except subprocess.TimeoutExpired:
+            validation["nmap_vulns"].append("Nmap validation timed out.")
+
+    nuclei_findings = _run_nuclei(target)
+    validation["nuclei_findings"] = nuclei_findings
+
+    return validation
 
 def _find_nuclei():
     tools_dir = Path(__file__).resolve().parent.parent / "tools"
@@ -349,148 +480,221 @@ def _scrape_linkedin(domain):
 def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
                   email_breaches, domain_breach_count, domain_breach_names,
                   directories, nmap_data, nikto_findings, ssl_info,
-                  nuclei_findings=None):
+                  nuclei_findings=None, technologies=None, waf=None,
+                  dns_records=None, dorks=None, nmap_vulns=None):
     from fpdf import FPDF
+
+    # Defaults
+    technologies = technologies or []
+    waf = waf or []
+    dns_records = dns_records or []
+    dorks = dorks or []
+    nmap_vulns = nmap_vulns or []
+    nuclei_findings = nuclei_findings or []
 
     desktop = Path.home() / "Desktop"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     safe_target = target.replace("://", "_").replace("/", "_").replace("\\", "_").replace(":", "_")
-    filename = f"cyber_recon_{safe_target}_{timestamp}.pdf"
+    filename = f"security_assessment_{safe_target}_{timestamp}.pdf"
     filepath = desktop / filename
 
-    pdf = FPDF()
+    # Custom PDF class with header/footer
+    class ReportPDF(FPDF):
+        def header(self):
+            self.set_fill_color(10, 20, 40)        # dark blue
+            self.set_text_color(255, 255, 255)
+            self.set_font("Courier", "B", 14)
+            self.cell(0, 10, "J.A.R.V.I.S SECURITY ASSESSMENT", ln=True, align="C", fill=True)
+            self.set_font("Courier", "", 9)
+            self.set_text_color(180, 220, 255)
+            self.cell(0, 6, f"Target: {target}", ln=True, align="C")
+            self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
+            self.ln(4)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font("Courier", "", 8)
+            self.set_text_color(128, 128, 128)
+            self.cell(0, 10, f"Page {self.page_no()} — J.A.R.V.I.S", align="C")
+
+    pdf = ReportPDF()
+    pdf.set_margins(10, 15, 10)
     pdf.add_page()
-    pdf.set_font("Courier", size=12)
-    pdf.cell(0, 10, "SECURITY ASSESSMENT REPORT", ln=True, align="C")
-    pdf.cell(0, 8, f"Target: {target}", ln=True, align="C")
-    pdf.cell(0, 8, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
-    pdf.ln(5)
+
+    # Sanitise all PDF text to Latin‑1 so Courier never crashes
+    _orig_cell = pdf.cell
+    _orig_multi_cell = pdf.multi_cell
+
+    def safe_cell(w, h=0, txt="", *args, **kwargs):
+        if isinstance(txt, str):
+            txt = txt.encode("latin-1", errors="replace").decode("latin-1")
+        return _orig_cell(w, h, txt, *args, **kwargs)
+
+    def safe_multi_cell(w, h=0, txt="", *args, **kwargs):
+        if isinstance(txt, str):
+            txt = txt.encode("latin-1", errors="replace").decode("latin-1")
+        return _orig_multi_cell(w, h, txt, *args, **kwargs)
+
+    pdf.cell = safe_cell
+    pdf.multi_cell = safe_multi_cell
+
+    def section_title(title):
+        pdf.set_fill_color(0, 120, 200)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Courier", "B", 11)
+        pdf.cell(0, 8, title, ln=True, fill=True)
+        pdf.ln(2)
+        pdf.set_text_color(220, 240, 255)
+        pdf.set_font("Courier", "", 9)
+
+    def line(text, indent=0, color=(220, 240, 255)):
+        pdf.set_text_color(*color)
+        # Keep only Latin‑1 characters that Courier can render
+        safe = text.encode("latin-1", errors="replace").decode("latin-1")
+        # Break long unbroken strings into small pieces that always fit
+        max_chars = 70
+        while len(safe) > max_chars:
+            chunk = safe[:max_chars]
+            safe = safe[max_chars:]
+            if indent:
+                pdf.cell(indent, 5, "")
+            pdf.cell(0, 5, chunk, ln=True)
+        if safe:
+            if indent:
+                pdf.cell(indent, 5, "")
+            # Use cell for the final short piece — never multi_cell
+            pdf.cell(0, 5, safe, ln=True)
+        pdf.set_text_color(220, 240, 255)
 
     # 1. Subdomains
-    pdf.set_font("Courier", size=10)
-    pdf.cell(0, 7, "[1] SUBDOMAINS DISCOVERED", ln=True)
-    pdf.ln(2)
+    section_title("[1] SUBDOMAINS DISCOVERED")
     if not subdomains:
-        pdf.cell(0, 6, "No subdomains discovered.", ln=True)
+        line("No subdomains discovered.")
     else:
         for sub in subdomains[:30]:
-            safe = sub.encode("latin-1", errors="replace").decode("latin-1")
-            pdf.cell(0, 6, safe, ln=True)
-    pdf.ln(5)
+            line(sub.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    pdf.ln(4)
 
-    # 2. Employee / LinkedIn profiles
-    pdf.cell(0, 7, "[2] EMPLOYEE / LINKEDIN PROFILES", ln=True)
-    pdf.ln(2)
+    # 2. LinkedIn
+    section_title("[2] EMPLOYEE / LINKEDIN PROFILES")
     if not linkedin:
-        pdf.cell(0, 6, "No LinkedIn profiles found.", ln=True)
+        line("No LinkedIn profiles found.")
     else:
         for profile in linkedin[:15]:
-            safe = profile.encode("latin-1", errors="replace").decode("latin-1")
-            pdf.cell(0, 6, safe, ln=True)
-    pdf.ln(5)
+            line(profile.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    pdf.ln(4)
 
-    # 3. Email harvesting & breach check
-    pdf.cell(0, 7, "[3] EMAIL ADDRESSES & BREACH STATUS", ln=True)
-    pdf.ln(2)
+    # 3. Email + Breach
+    section_title("[3] EMAIL ADDRESSES & BREACH STATUS")
     if emails:
-        pdf.cell(0, 6, "Harvested emails:", ln=True)
+        line("Harvested emails:")
         for e in emails[:10]:
-            pdf.cell(6, 6, "")
-            safe_e = e.encode("latin-1", errors="replace").decode("latin-1")
             breaches = email_breaches.get(e, [])
             if breaches:
-                pdf.cell(0, 6, f"{safe_e}  [BREACHED: {', '.join(breaches[:3])}]", ln=True)
+                line(f"{e}  [BREACHED: {', '.join(breaches[:3])}]", indent=5, color=(255,100,100))
             else:
-                pdf.cell(0, 6, f"{safe_e}  [No breaches found]", ln=True)
-    pdf.cell(0, 6, "Common email guesses (not verified):", ln=True)
+                line(f"{e}  [No breaches found]", indent=5)
+    line("Common email guesses (not verified):")
     for guess in email_guesses[:10]:
-        safe_g = guess.encode("latin-1", errors="replace").decode("latin-1")
-        pdf.cell(6, 6, "")
-        pdf.cell(0, 6, safe_g, ln=True)
+        line(guess, indent=5)
     if domain_breach_count > 0:
-        pdf.cell(0, 6, f"Domain breaches: {domain_breach_count} ({', '.join(domain_breach_names)})", ln=True)
+        line(f"Domain breaches: {domain_breach_count} ({', '.join(domain_breach_names)})", color=(255,100,100))
     else:
-        pdf.cell(0, 6, "Domain does not appear in known data breaches.", ln=True)
-    pdf.ln(5)
+        line("Domain does not appear in known data breaches.")
+    pdf.ln(4)
 
     # 4. Sensitive directories
-    pdf.cell(0, 7, "[4] SENSITIVE DIRECTORIES / FILES", ln=True)
-    pdf.ln(2)
+    section_title("[4] SENSITIVE DIRECTORIES / FILES")
     if not directories:
-        pdf.cell(0, 6, "No sensitive paths discovered.", ln=True)
+        line("No sensitive paths discovered.")
     else:
         for d in directories:
-            safe = d.encode("latin-1", errors="replace").decode("latin-1")
-            pdf.cell(0, 6, safe, ln=True)
-    pdf.ln(5)
+            line(d.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    pdf.ln(4)
 
-    # 5. Port scan (with vuln scripts)
-    pdf.cell(0, 7, "[5] PORT SCAN WITH VULNERABILITY DETECTION (Nmap)", ln=True)
-    pdf.ln(2)
+    # 5. Nmap
+    section_title("[5] PORT SCAN WITH VULNERABILITY DETECTION (Nmap)")
     error = nmap_data.get("error")
     if error:
-        pdf.cell(0, 6, f"Error: {error}", ln=True)
+        line(f"Error: {error}", color=(255,100,100))
     else:
         hosts = nmap_data.get("hosts", [])
         if not hosts:
-            pdf.cell(0, 6, "No open ports found.", ln=True)
+            line("No open ports found.")
         else:
             for host in hosts:
-                pdf.cell(0, 6, f"Host: {host['ip']}", ln=True)
+                line(f"Host: {host['ip']}", indent=5)
                 for port in host["open_ports"]:
-                    pdf.cell(6, 6, "")
-                    pdf.cell(0, 6, port, ln=True)
+                    line(port, indent=10)
         raw = nmap_data.get("raw", "")
         if raw:
-            pdf.ln(3)
-            pdf.cell(0, 6, "Raw Nmap output (first 80 lines, includes CVE data):", ln=True)
-            pdf.set_font("Courier", size=6)
-            for line in raw.splitlines()[:80]:
-                safe_line = line.encode("latin-1", errors="replace").decode("latin-1")
-                pdf.cell(0, 4, safe_line, ln=True)
-            pdf.set_font("Courier", size=10)
-    pdf.ln(5)
+            pdf.ln(2)
+            line("Raw Nmap output (first 50 lines):")
+            pdf.set_font("Courier", "", 6)
+            for rline in raw.splitlines()[:50]:
+                pdf.cell(0, 4, rline.encode("latin-1", "replace").decode("latin-1"), ln=True)
+            pdf.set_font("Courier", "", 9)
+    pdf.ln(4)
 
-    # 6. SSL cert
-    pdf.cell(0, 7, "[6] SSL/TLS CERTIFICATE", ln=True)
-    pdf.ln(2)
+    # 6. SSL
+    section_title("[6] SSL/TLS CERTIFICATE")
     if ssl_info:
-        pdf.cell(0, 6, f"Subject: {ssl_info['subject']}", ln=True)
-        pdf.cell(0, 6, f"Issuer: {ssl_info['issuer']}", ln=True)
-        pdf.cell(0, 6, f"Expires: {ssl_info['expires']}", ln=True)
+        line(f"Subject: {ssl_info['subject']}")
+        line(f"Issuer: {ssl_info['issuer']}")
+        line(f"Expires: {ssl_info['expires']}")
     else:
-        pdf.cell(0, 6, "Could not retrieve SSL certificate.", ln=True)
-    pdf.ln(5)
+        line("Could not retrieve SSL certificate.")
+    pdf.ln(4)
 
-    # 7. Web vulnerabilities (Nikto)
-    pdf.cell(0, 7, "[7] WEB VULNERABILITY SCAN (Nikto)", ln=True)
-    pdf.ln(2)
+    # 7. Nikto
+    section_title("[7] WEB VULNERABILITY SCAN (Nikto)")
     if not nikto_findings:
-        pdf.cell(0, 6, "No web vulnerabilities found or scan blocked.", ln=True)
+        line("No web vulnerabilities found or scan blocked.")
     else:
         for finding in nikto_findings[:15]:
-            safe = finding.encode("latin-1", errors="replace").decode("latin-1")
-            pdf.set_font("Courier", size=8)
-            pdf.multi_cell(0, 5, safe)
-        pdf.set_font("Courier", size=10)
-    pdf.ln(5)
+            line(finding.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    pdf.ln(4)
 
-    # 8. Nuclei CVE findings
-    pdf.cell(0, 7, "[8] NUCLEI CVE FINDINGS", ln=True)
-    pdf.ln(2)
+    # 8. Nuclei
+    section_title("[8] NUCLEI CVE FINDINGS")
     if not nuclei_findings:
-        pdf.cell(0, 6, "No CVE findings or Nuclei not available.", ln=True)
+        line("No CVE findings or Nuclei not available.")
     else:
         for finding in nuclei_findings[:20]:
-            safe = finding.encode("latin-1", errors="replace").decode("latin-1")
-            pdf.set_font("Courier", size=8)
-            pdf.multi_cell(0, 5, safe)
-        pdf.set_font("Courier", size=10)
-    pdf.ln(5)
+            line(finding.encode("latin-1", "replace").decode("latin-1"), indent=5, color=(255,200,0))
+    pdf.ln(4)
 
-    # 9. Executive Summary
-    pdf.cell(0, 7, "[9] EXECUTIVE SUMMARY", ln=True)
-    pdf.ln(2)
+    # 9. Advanced recon
+    section_title("[9] ADVANCED RECONNAISSANCE")
+    line("Technologies:")
+    for tech in technologies[:10]:
+        line(tech.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    line("WAF Detection:")
+    for w in waf[:5]:
+        line(w.encode("latin-1", "replace").decode("latin-1"), indent=5)
+    line("DNS Records (truncated):")
+    pdf.set_font("Courier", "", 7)
+    for record in dns_records[:15]:
+        pdf.cell(0, 4, record.encode("latin-1", "replace").decode("latin-1"), ln=True)
+    pdf.set_font("Courier", "", 9)
+    line("OSINT Dorks:")
+    pdf.set_font("Courier", "", 7)
+    for dork in dorks[:10]:
+        pdf.cell(0, 4, dork.encode("latin-1", "replace").decode("latin-1"), ln=True)
+    pdf.set_font("Courier", "", 9)
+    pdf.ln(4)
+
+    # 10. Simulated exploitation
+    section_title("[10] SIMULATED EXPLOITATION / VALIDATION")
+    if nmap_vulns:
+        for vuln in nmap_vulns[:20]:
+            line(vuln.encode("latin-1", "replace").decode("latin-1"), indent=5, color=(255,100,100))
+    else:
+        line("No Nmap vulnerability scripts found issues.")
+    pdf.ln(4)
+
+    # 11. Summary
+    section_title("[11] EXECUTIVE SUMMARY")
     total_ports = sum(len(h["open_ports"]) for h in nmap_data.get("hosts", []))
     summary = (
         f"Target: {target}\n"
@@ -500,6 +704,9 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
         f"Domain breaches: {domain_breach_count}\n"
         f"Sensitive paths: {len(directories)}\n"
         f"Open ports: {total_ports}\n"
+        f"Technologies: {len(technologies)}\n"
+        f"WAF: {', '.join(waf) if waf else 'None'}\n"
+        f"Nmap vulnerability findings: {len(nmap_vulns)}\n"
         f"Nuclei findings: {len(nuclei_findings)}\n"
         f"Web findings: {len(nikto_findings)}\n"
         f"SSL valid until: {ssl_info['expires'] if ssl_info else 'unknown'}\n\n"
@@ -514,6 +721,8 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
     spoken = (
         f"Security assessment on {target} complete. "
         f"Found {len(subdomains)} subdomains, {len(linkedin)} employee profiles, "
+        f"{len(technologies)} technologies detected, "
+        f"{len(nmap_vulns)} Nmap vulnerability findings, "
         f"{len(emails)} emails ({sum(1 for e in emails if email_breaches.get(e))} breached), "
         f"{domain_breach_count} domain breaches, {len(directories)} sensitive paths, "
         f"{total_ports} open ports, {len(nikto_findings)} web findings, "
@@ -553,13 +762,22 @@ def security_mode(parameters: dict, player=None) -> str:
     nikto_findings = _parse_nikto(nikto_raw)
     ssl_info = _check_ssl(domain)
 
-    nuclei_findings = _run_nuclei(domain)
-    nuclei_findings = nuclei_findings or []
+    technologies = _detect_technologies(domain)
+    waf = _detect_waf(domain)
+    dns_records = _advanced_dns_enum(domain)
+    dorks = _generate_dorks(domain)
+
+    validation = _run_safe_validation(domain)
+    nmap_vulns = validation.get("nmap_vulns", [])
+    nuclei_findings = validation.get("nuclei_findings", [])
+
+
 
     filepath, spoken = _generate_pdf(
         domain, subdomains, linkedin, emails, email_guesses, email_breaches,
         domain_breach_count, domain_breach_names, directories,
-        nmap_data, nikto_findings, ssl_info, nuclei_findings
+        nmap_data, nikto_findings, ssl_info, nuclei_findings,
+        technologies, waf, dns_records, dorks, nmap_vulns
     )
 
     return spoken + "\n" + str(filepath)
