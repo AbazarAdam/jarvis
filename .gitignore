@@ -35,3 +35,6 @@ tools/nuclei/nuclei.exe
 
 # User shortcuts
 memory/shortcuts.json
+
+# Gmail email plugin token
+config/gmail_token_email.pickle

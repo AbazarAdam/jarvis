@@ -2,6 +2,7 @@ import asyncio
 import threading
 import json
 import sys
+import re
 import traceback
 import importlib.util
 import uuid
@@ -631,7 +632,12 @@ class JarvisLive:
         self.background_tasks = {}
 
 
-
+    def _clean_transcript(self, text: str) -> str:
+        try:
+            import re
+            return re.sub(r"<[^>]*>", "", text).strip()
+        except Exception:
+            return text.strip()
 
 
     def get_last_response(self) -> str:
@@ -1128,29 +1134,29 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
 
-                        if sc.turn_complete:
-                            print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
-                            self.set_speaking(False)
+                            if sc.turn_complete:
+                                print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
+                                self.set_speaking(False)
 
-                            full_in = " ".join(in_buf).strip()
-                            if full_in:
-                                self.ui.write_log(f"You: {full_in}")
-                            in_buf = []
+                                full_in = " ".join(in_buf).strip()
+                                if full_in:
+                                    self.ui.write_log(f"You: {full_in}")
+                                in_buf = []
 
-                            full_out = " ".join(out_buf).strip()
-                            # Store for remote dashboard
-                            with self._response_lock:
-                                self._last_response = full_out
-                            if full_out:
-                                self.ui.write_log(f"Jarvis: {full_out}")
-                            out_buf = []
+                                full_out = " ".join(out_buf).strip()
+                                # Store for remote dashboard
+                                with self._response_lock:
+                                    self._last_response = full_out
+                                if full_out:
+                                    self.ui.write_log(f"Jarvis: {full_out}")
+                                out_buf = []
 
-                            if full_in and len(full_in) > 5:
-                                threading.Thread(
-                                    target=_update_memory_async,
-                                    args=(full_in, full_out),
-                                    daemon=True
-                                ).start()
+                                if full_in and len(full_in) > 5:
+                                    threading.Thread(
+                                        target=_update_memory_async,
+                                        args=(full_in, full_out),
+                                        daemon=True
+                                    ).start()
 
                     if response.tool_call:
                         fn_responses = []
