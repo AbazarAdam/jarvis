@@ -869,7 +869,7 @@ class JarvisLive:
                 )
                 return types.FunctionResponse(
                     id=fc.id, name=name,
-                    response={"result": "ok", "silent": True}
+                    response={"result": "Task started in background. It is still running.", "silent": True}
                 )
 
             elif name == "camera_stream":

@@ -506,7 +506,7 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
             self.set_font("Courier", "B", 14)
             self.cell(0, 10, "J.A.R.V.I.S SECURITY ASSESSMENT", ln=True, align="C", fill=True)
             self.set_font("Courier", "", 9)
-            self.set_text_color(180, 220, 255)
+            self.set_text_color(0, 0, 0)
             self.cell(0, 6, f"Target: {target}", ln=True, align="C")
             self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
             self.ln(4)
@@ -544,10 +544,10 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
         pdf.set_font("Courier", "B", 11)
         pdf.cell(0, 8, title, ln=True, fill=True)
         pdf.ln(2)
-        pdf.set_text_color(220, 240, 255)
+        pdf.set_text_color(0, 0, 0)
         pdf.set_font("Courier", "", 9)
 
-    def line(text, indent=0, color=(220, 240, 255)):
+    def line(text, indent=0, color=(0, 0, 0)):
         pdf.set_text_color(*color)
         # Keep only Latin‑1 characters that Courier can render
         safe = text.encode("latin-1", errors="replace").decode("latin-1")
@@ -564,7 +564,7 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
                 pdf.cell(indent, 5, "")
             # Use cell for the final short piece — never multi_cell
             pdf.cell(0, 5, safe, ln=True)
-        pdf.set_text_color(220, 240, 255)
+        pdf.set_text_color(0, 0, 0)
 
     # 1. Subdomains
     section_title("[1] SUBDOMAINS DISCOVERED")
@@ -631,9 +631,11 @@ def _generate_pdf(target, subdomains, linkedin, emails, email_guesses,
             pdf.ln(2)
             line("Raw Nmap output (first 50 lines):")
             pdf.set_font("Courier", "", 6)
+            pdf.set_text_color(0, 0, 0)
             for rline in raw.splitlines()[:50]:
                 pdf.cell(0, 4, rline.encode("latin-1", "replace").decode("latin-1"), ln=True)
             pdf.set_font("Courier", "", 9)
+            pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
     # 6. SSL
