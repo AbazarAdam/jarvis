@@ -664,7 +664,6 @@ class JarvisLive:
 
 
 
-
     def get_last_response(self) -> str:
         with self._response_lock:
             return self._last_response
@@ -933,13 +932,34 @@ class JarvisLive:
 
             elif name == "security_mode":
                 from actions.security_mode import security_mode as sm
+
+                # Quick actions run synchronously
+                action = args.get("action", "full").lower()
+                if action in ("list_tools", "update_tools"):
+                    result = sm(parameters=args, player=self.ui, speak=self.speak)
+                    return types.FunctionResponse(
+                        id=fc.id, name=name,
+                        response={"result": result}
+                    )
+
+                # Full scan requires confirmation before starting background
+                confirmed = str(args.get("confirmed", "")).lower()
+                if confirmed not in ("yes", "true", "1", "confirm"):
+                    self.speak(
+                        f"Please confirm you are authorised to test {args.get('target', 'unknown')}, sir."
+                    )
+                    return types.FunctionResponse(
+                        id=fc.id, name=name,
+                        response={"result": "Authorisation required."}
+                    )
+
                 self._start_background_tool("security_mode", args, sm)
                 self._announce_local(
-                    "Security assessment started in background, sir. I will notify you when complete."
+                    "Red team engagement started in background, sir. I will notify you when complete."
                 )
                 return types.FunctionResponse(
                     id=fc.id, name=name,
-                    response={"result": "Task started in background. It is still running.", "silent": True}
+                    response={"result": "ok", "silent": True}
                 )
 
             elif name == "camera_stream":
