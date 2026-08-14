@@ -701,15 +701,6 @@ class JarvisLive:
                 return
             self._is_speaking = value
 
-        # Log only real transitions
-        try:
-            out_q = self.out_queue.qsize() if self.out_queue else 'N/A'
-            in_q = self.audio_in_queue.qsize() if self.audio_in_queue else 'N/A'
-            dropped = getattr(self, '_dropped_frames', 0)
-            print(f"[JARVIS] set_speaking: {prev} -> {value} out_q={out_q} in_q={in_q} dropped={dropped}")
-        except Exception:
-            pass
-
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
