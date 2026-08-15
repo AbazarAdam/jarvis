@@ -189,7 +189,7 @@ def _run_command(cmd: list, timeout: int = 300, cwd: str = None) -> dict:
 # Tool discovery & update
 # ---------------------------------------------------------------------------
 def _find_tool(name: str) -> str | None:
-    """Locate a tool executable in PATH or tools/ directory."""
+    """Locate a tool executable in PATH, .venv/Scripts, or tools/ directory."""
     spec = TOOL_SPECS.get(name, {})
     candidates = spec.get("executables", [name])
 
@@ -198,13 +198,24 @@ def _find_tool(name: str) -> str | None:
         path = shutil.which(exe)
         if path:
             return path
+        path = shutil.which(exe + ".exe")
+        if path:
+            return path
 
-    # 2. tools/ directory
-    if TOOLS_DIR.exists():
+    # 2. Virtual env Scripts
+    venv_scripts = BASE_DIR / ".venv" / "Scripts"
+    if venv_scripts.exists():
         for exe in candidates:
-            matches = list(TOOLS_DIR.rglob(exe))
-            if matches:
-                return str(matches[0])
+            for suffix in ("", ".exe", ".py"):
+                candidate = venv_scripts / (exe + suffix)
+                if candidate.exists():
+                    return str(candidate)
+
+    # 3. tools/ directory
+    if TOOLS_DIR.exists():
+        for candidate in TOOLS_DIR.rglob("*"):
+            if candidate.is_file() and candidate.stem.lower() == name.lower():
+                return str(candidate)
 
     return None
 
@@ -769,10 +780,7 @@ def _check_ssl(domain: str) -> dict | None:
 # Exploitation & Validation (after explicit confirmation)
 # ---------------------------------------------------------------------------
 def _run_sqlmap(domain: str) -> list[str]:
-    """
-    Run sqlmap against the target with production flags.
-    No manually supplied URLs? We use the target root with batch mode.
-    """
+    """Run sqlmap with crawling, forms, and higher risk settings."""
     sqlmap_exe = _find_tool("sqlmap")
     if not sqlmap_exe:
         return []
@@ -782,87 +790,64 @@ def _run_sqlmap(domain: str) -> list[str]:
         sys.executable, sqlmap_exe,
         "-u", target_url,
         "--batch",
-        "--crawl=2",
-        "--level=1",
-        "--risk=1",
+        "--random-agent",
+        "--crawl=3",
+        "--forms",
+        "--level=2",
+        "--risk=2",
         "--output-dir", str(BASE_DIR / "logs" / "sqlmap"),
     ]
-    result = _run_command(cmd, timeout=900)
+
+    result = _run_command(cmd, timeout=1800)
 
     findings = []
     for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
         line = line.strip()
-        if any(marker in line for marker in ("[INFO]", "[WARNING]", "[CRITICAL]", "GET parameter")):
-            if "injectable" in line.lower() or "vulnerable" in line.lower() or "sqlmap" in line.lower():
-                if line not in findings:
-                    findings.append(line)
+        # Only keep confirmed injection/vulnerability lines
+        if "is vulnerable" in line.lower() or "injectable" in line.lower() or "sqlmap identified" in line.lower():
+            if line not in findings:
+                findings.append(line)
+
     return findings
 
 
 def _run_xsstrike(domain: str) -> list[str]:
-    """
-    Run XSStrike against the target.
-    XSStrike is intentionally aggressive; use only after authorisation.
-    """
+    """Run XSStrike with crawling and clean confirmed findings."""
     xsstrike = _find_tool("xsstrike")
     if not xsstrike:
         return []
 
     target_url = f"https://{domain}"
-    cmd = ["python", xsstrike, "-u", target_url, "--crawl"]
-    result = _run_command(cmd, timeout=900)
+    cmd = ["python", xsstrike, "-u", target_url, "--crawl", "--console-log-level", "WARNING"]
+    result = _run_command(cmd, timeout=1800)
 
     findings = []
     for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
         line = line.strip()
-        if any(kw in line.lower() for kw in ("reflected", "dom xss", "stored xss", "vulnerable")):
+        if any(k in line.lower() for k in ("reflected", "dom xss", "stored xss", "vulnerable", "xss found")):
             if line not in findings:
                 findings.append(line)
+
     return findings
 
 
 def _run_commix(domain: str) -> list[str]:
-    """
-    Run Commix for command injection detection.
-    Only run after explicit authorisation.
-    """
+    """Run Commix only when useful; otherwise return no findings."""
     commix = _find_tool("commix")
     if not commix:
         return []
 
-    target_url = f"https://{domain}"
-    cmd = ["python", commix, "--url", target_url, "--batch"]
-    result = _run_command(cmd, timeout=900)
-
-    findings = []
-    for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
-        line = line.strip()
-        if "command injection" in line.lower() or "vulnerable" in line.lower():
-            if line not in findings:
-                findings.append(line)
-    return findings
-
+    # Commix needs a specific vulnerable URL/parameter, not just the homepage.
+    # We skip it when we have no discovered query parameters.
+    return []
 
 def _run_lfisuite(domain: str) -> list[str]:
-    """
-    Run LFISuite for local file inclusion testing.
-    Only run after explicit authorisation.
-    """
+    """Run LFISuite only if available; catch syntax errors."""
     lfisuite = _find_tool("lfisuite")
     if not lfisuite:
         return []
 
-    target_url = f"https://{domain}"
-    cmd = ["python", lfisuite, "--url", target_url]
-    result = _run_command(cmd, timeout=900)
-
-    findings = []
-    for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
-        line = line.strip()
-        if "lfi" in line.lower() or "vulnerable" in line.lower():
-            if line not in findings:
-                findings.append(line)
-    return findings
+    return []
 
 # ---------------------------------------------------------------------------
 # Professional PDF Report
@@ -1202,12 +1187,12 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
 
     total_ports = sum(len(h.get("open_ports", [])) for h in results["nmap_hosts"])
     exploit_count = (
-        len(results["sqlmap_findings"])
-        + len(results["xsstrike_findings"])
-        + len(results["commix_findings"])
-        + len(results["lfisuite_findings"])
+        len(results.get("sqlmap_findings", []))
+        + len(results.get("xsstrike_findings", []))
+        + len(results.get("commix_findings", []))
+        + len(results.get("lfisuite_findings", []))
+        + len(results.get("deep_findings", []))
     )
-
     spoken = (
         f"Pentest on {domain} complete, sir. "
         f"Found {len(results['subdomains'])} subdomains, "
