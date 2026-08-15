@@ -245,6 +245,55 @@ def update_tools() -> str:
     summary += "\n".join(failed) if failed else "(none)"
     return summary
 
+
+
+
+
+def _get_llm_insight(prompt: str) -> str:
+    """
+    Use Groq/Gemini to get tactical recommendations during the pentest.
+    """
+    try:
+        from groq_client import groq_client
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an elite penetration tester. "
+                    "Analyse the data and return a concise, actionable plan. "
+                    "Be direct and technical."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        return groq_client.chat(messages, temperature=0.2, max_tokens=1500)
+    except Exception:
+        try:
+            from or_client import client
+            messages = [
+                {"role": "system", "content": "You are an elite penetration tester."},
+                {"role": "user", "content": prompt},
+            ]
+            return client.multi_turn(messages, temperature=0.2, max_tokens=1500)
+        except Exception:
+            return "No AI insight available."
+
+
+def _detect_cms(domain: str, technologies: list[str]) -> str:
+    """Return detected CMS/framework name or 'unknown'."""
+    tech_str = " ".join(technologies).lower()
+    if "wordpress" in tech_str or "wp-content" in tech_str:
+        return "wordpress"
+    if "joomla" in tech_str:
+        return "joomla"
+    if "drupal" in tech_str:
+        return "drupal"
+    if "react" in tech_str or "next.js" in tech_str:
+        return "react"
+    if "vue" in tech_str:
+        return "vue"
+    return "unknown"
+
 # ---------------------------------------------------------------------------
 # Reconnaissance & OSINT
 # ---------------------------------------------------------------------------
@@ -585,6 +634,17 @@ def _parse_nmap_text(output: str) -> list[dict]:
         hosts.append({"ip": current_ip, "open_ports": ports})
     return hosts
 
+def _parse_nikto(raw: str) -> list[str]:
+    """Extract unique Nikto findings from raw output."""
+    if not raw:
+        return []
+    findings = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("+ ") and "ERROR:" not in line:
+            if line not in findings:
+                findings.append(line)
+    return findings
 
 def _run_nikto(domain: str) -> list[str]:
     """Run Nikto web scanner if available."""
@@ -949,6 +1009,13 @@ def _generate_pdf(results: dict) -> Path:
     _write_pdf_section(pdf, "[19] SSL/TLS CERTIFICATE", ssl_lines)
     pdf.ln(4)
 
+
+    _write_pdf_section(pdf, "[20] AI TACTICAL INSIGHT", [results.get("ai_insight", "No insight.")], max_items=50)
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[21] DEEP PROBE FINDINGS", results.get("deep_findings", []))
+    pdf.ln(4)
+
+
     # Executive summary
     total_ports = sum(len(h.get("open_ports", [])) for h in results.get("nmap_hosts", []))
     summary_lines = [
@@ -969,6 +1036,59 @@ def _generate_pdf(results: dict) -> Path:
 # ---------------------------------------------------------------------------
 # Main Dispatcher
 # ---------------------------------------------------------------------------
+def _run_deep_probes(domain: str, initial_findings: dict) -> dict:
+    """Use AI to recommend and run deeper targeted tests."""
+    prompt = f"""
+You are an elite penetration tester performing an authorised test on {domain}.
+
+Initial findings:
+- Technologies: {initial_findings.get('technologies', [])}
+- Open ports: {initial_findings.get('open_ports', [])}
+- Web findings: {initial_findings.get('web_findings', [])}
+- CMS detected: {initial_findings.get('cms', 'unknown')}
+- WAF detected: {initial_findings.get('waf', [])}
+
+Based only on this data, recommend the next 3 most valuable penetration tests to run.
+For each, give:
+1. Tool / manual technique
+2. Why it is likely to succeed
+3. One specific command or test payload (if applicable)
+
+Return a concise report.
+"""
+    insight = _get_llm_insight(prompt)
+
+    extra = {
+        "ai_insight": insight,
+        "deep_findings": [],
+    }
+
+    cms = initial_findings.get("cms", "unknown")
+
+    if cms == "wordpress":
+        wpscan = _run_wpscan(domain)
+        if wpscan:
+            extra["deep_findings"].extend(wpscan)
+
+    elif cms in ("joomla", "drupal"):
+        droopescan = _run_droopescan(domain)
+        if droopescan:
+            extra["deep_findings"].extend(droopescan)
+
+    # Run XSStrike if a login/admin/search page was found
+    dirs = initial_findings.get("directories", [])
+    if dirs:
+        extra["deep_findings"].append("Discovered sensitive paths: " + ", ".join(dirs[:10]))
+        for d in dirs:
+            if any(k in d.lower() for k in ("login", "admin", "search", "query")):
+                xs = _run_xsstrike(f"https://{domain}")
+                if xs:
+                    extra["deep_findings"].extend(xs)
+                break
+
+    return extra
+
+
 def security_mode(parameters: dict, player=None, speak=None) -> str:
     """
     Full red‑team pentest engine.
@@ -1062,6 +1182,20 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         else:
             email_lines.append(f"{e}  [No breaches found]")
     results["email_lines"] = email_lines
+
+    # --------------------------- Deep probes ---------------------------
+    initial_findings = {
+        "technologies": results.get("technologies", []),
+        "open_ports": results.get("nmap_ports", []),
+        "web_findings": results.get("nikto_findings", []),
+        "cms": _detect_cms(domain, results.get("technologies", [])),
+        "waf": results.get("waf", []),
+        "directories": results.get("directories", []),
+    }
+
+    deep = _run_deep_probes(domain, initial_findings)
+    results["ai_insight"] = deep.get("ai_insight", "")
+    results["deep_findings"] = deep.get("deep_findings", [])
 
     # --------------------------- Report ---------------------------
     filepath = _generate_pdf(results)
