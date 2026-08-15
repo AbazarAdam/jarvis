@@ -866,7 +866,25 @@ class JarvisLive:
                 )
 
         try:
-            # Plugin dispatch
+            # Special handling for slow security_tool_manager actions
+            if name == "security_tool_manager":
+                action = args.get("action", "").lower()
+                if action in ("install", "install_tools", "update", "update_tools"):
+                    plugin_fn = PLUGIN_FUNCTIONS[name]
+
+                    def _run_tool_manager(parameters, player=None):
+                        return plugin_fn(parameters=parameters, player=player, speak=None)
+
+                    self._start_background_tool("security_tool_manager", args, _run_tool_manager)
+                    self._announce_local("Security tool operation started in background, sir.")
+                    self.speak(f"Starting security tool {action}, sir.")
+                    return types.FunctionResponse(
+                        id=fc.id, name=name,
+                        response={"result": "ok", "silent": True}
+                    )
+                # status/rollback are quick, run synchronously below
+
+            # Plugin dispatch (all other plugins and quick security_tool_manager actions)
             if name in PLUGIN_FUNCTIONS:
                 plugin_fn = PLUGIN_FUNCTIONS[name]
                 r = await self._run_cancellable(
@@ -1109,10 +1127,10 @@ class JarvisLive:
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
 
-        # Always log Jarvis's answer when a tool returns a readable result
+        # Log tool output as SYS, not Jarvis speech
         if isinstance(result, str) and result.strip():
             try:
-                self.ui.write_log(f"Jarvis: {result[:200]}")
+                self.ui.write_log(f"SYS: {name} — {result[:200]}")
             except Exception:
                 pass
 
@@ -1195,16 +1213,21 @@ class JarvisLive:
                             print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
                             self.set_speaking(False)
 
-                            full_in = " ".join(in_buf).strip()
+                            full_in = self._clean_transcript(" ".join(in_buf))
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                             in_buf = []
 
-                            full_out = " ".join(out_buf).strip()
+                            full_out = self._clean_transcript(" ".join(out_buf))
                             with self._response_lock:
                                 self._last_response = full_out
-                                if full_out:
-                                    self.ui.write_log(f"Jarvis: {full_out}")
+
+                            if full_out:
+                                self.ui.write_log(f"Jarvis: {full_out}")
+                            else:
+                                self.ui.write_log("Jarvis: (voice response)")
+
+                            out_buf = []
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
