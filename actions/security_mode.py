@@ -22,7 +22,7 @@ from datetime import datetime
 import requests
 
 from core.audit import log_action
-from core.proxy_manager import get_requests_proxies, get_tool_proxy_arg, log_proxy_status
+from core.proxy_manager import get_requests_proxies, get_tool_proxy_arg, get_tool_env, log_proxy_status
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +180,14 @@ def _run_command(cmd: list, timeout: int = 300, cwd: str = None) -> dict:
     """Run a command and return a normalised dict."""
     log_action(AUDIT_TAG, {"command": " ".join(str(c) for c in cmd)}, status="started")
 
+    # Build environment with proxy if configured
+    env = None
+    proxy_env = get_tool_env()
+    if proxy_env:
+        import os
+        env = os.environ.copy()
+        env.update(proxy_env)
+
     try:
         proc = subprocess.run(
             [str(c) for c in cmd],
@@ -189,6 +197,7 @@ def _run_command(cmd: list, timeout: int = 300, cwd: str = None) -> dict:
             errors="replace",
             timeout=timeout,
             cwd=cwd or str(BASE_DIR),
+            env=env,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
 

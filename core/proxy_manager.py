@@ -54,6 +54,23 @@ def get_tool_proxy_arg() -> list[str] | None:
     return ["--proxy", proxy_str]
 
 
+def get_tool_env() -> dict | None:
+    """Return environment variables for subprocess tools.
+
+    Most tools (Go-based, Python requests, Ruby) honour these variables.
+    If a tool needs an explicit CLI flag instead, it can be added later.
+    """
+    proxy_str = _load_proxy_string()
+    if not proxy_str:
+        return None
+    return {
+        "HTTP_PROXY": proxy_str,
+        "HTTPS_PROXY": proxy_str,
+        "ALL_PROXY": proxy_str,
+        "NO_PROXY": "localhost,127.0.0.1",
+    }
+
+
 def log_proxy_status() -> str:
     proxy_str = _load_proxy_string()
     if proxy_str:
