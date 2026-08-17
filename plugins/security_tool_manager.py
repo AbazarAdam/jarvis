@@ -65,13 +65,17 @@ GIT_TOOLS = {
         "repo": "https://github.com/D35m0nd142/LFISuite.git",
         "folder": "lfisuite",
     },
+    "whatweb": {
+        "repo": "https://github.com/urbanadventurer/WhatWeb.git",
+        "folder": "whatweb",
+    },
 }
 
 # Binary tools downloaded from GitHub latest release
 BINARY_TOOLS = {
     "amass": {
         "repo": "owasp-amass/amass",
-        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.tar.gz", "windows-amd64.zip"],
     },
     "gobuster": {
         "repo": "OJ/gobuster",
@@ -95,20 +99,21 @@ BINARY_TOOLS = {
     },
     "dalfox": {
         "repo": "hahwul/dalfox",
-        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
-    },
-    "whatweb": {
-        "repo": "urbanadventurer/WhatWeb",
-        "asset_patterns": ["windows.zip", "windows_amd64.zip"],
+        "asset_patterns": ["windows_amd64.tar.gz", "windows_amd64.zip", "windows_amd64"],
     },
     "trufflehog": {
         "repo": "trufflesecurity/trufflehog",
-        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+        "asset_patterns": ["windows_amd64.tar.gz", "windows_amd64.zip", "windows_amd64"],
     },
     "ffuf": {
         "repo": "ffuf/ffuf",
         "asset_patterns": ["windows_amd64.zip", "Windows_x86_64.zip"],
     },
+}
+
+# Tools that cannot be auto-installed reliably on Windows yet
+MANUAL_WINDOWS_TOOLS = {
+    "searchsploit",
 }
 
 
@@ -208,7 +213,8 @@ def _get_latest_release_asset(repo: str, patterns: list[str]) -> str | None:
     """Return download URL for the latest matching release asset."""
     api_url = f"https://api.github.com/repos/{repo}/releases/latest"
     try:
-        resp = requests.get(api_url, timeout=30)
+        headers = {"User-Agent": "JARVIS"}
+        resp = requests.get(api_url, timeout=30, headers=headers)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -223,6 +229,7 @@ def _get_latest_release_asset(repo: str, patterns: list[str]) -> str | None:
 
 def install_binary_tools() -> list[str]:
     """Download and extract Windows binaries from latest GitHub releases."""
+    import tarfile
     results = []
     TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -239,18 +246,28 @@ def install_binary_tools() -> list[str]:
 
         dest_dir = TOOLS_DIR / name
         dest_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = dest_dir / f"{name}.zip"
+        archive_path = dest_dir / f"{name}.download"
 
         try:
             r = requests.get(url, timeout=180, stream=True)
             if r.status_code == 200:
-                with open(zip_path, "wb") as f:
+                with open(archive_path, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
 
-                with zipfile.ZipFile(zip_path) as z:
-                    z.extractall(dest_dir)
-                zip_path.unlink(missing_ok=True)
+                if zipfile.is_zipfile(archive_path):
+                    with zipfile.ZipFile(archive_path) as z:
+                        z.extractall(dest_dir)
+                elif tarfile.is_tarfile(archive_path):
+                    with tarfile.open(archive_path) as tar:
+                        tar.extractall(dest_dir)
+                else:
+                    results.append(f"{name}: unsupported archive format")
+                    _log(f"Downloaded {name} archive is not zip or tar")
+                    archive_path.unlink(missing_ok=True)
+                    continue
+
+                archive_path.unlink(missing_ok=True)
 
                 # Verify extracted tool exists
                 if _find_tool(name):
@@ -313,7 +330,7 @@ def update_all_tools() -> list[str]:
 
 
 def status_tools() -> list[str]:
-    names = set(PIP_TOOLS) | set(GIT_TOOLS) | set(BINARY_TOOLS) | {"nuclei", "nikto", "wpscan"}
+    names = set(PIP_TOOLS) | set(GIT_TOOLS) | set(BINARY_TOOLS) | {"nuclei", "nikto", "wpscan"} | MANUAL_WINDOWS_TOOLS
     lines = []
     for name in sorted(names):
         status = "installed" if _tool_exists(name) else "missing"

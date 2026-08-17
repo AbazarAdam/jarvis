@@ -41,3 +41,6 @@ config/gmail_token_email.pickle
 tools/dnsx/
 tools/katana/
 tools/subfinder/
+tools/amass/
+tools/trufflehog/
+tools/whatweb/

