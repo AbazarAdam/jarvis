@@ -304,7 +304,19 @@ def update_tools() -> str:
             updated.append(f"{tool}: no automatic update command")
             continue
 
-        result = _run_command(update_cmd, timeout=180)
+        # Resolve the first command word to the actual tool path only when the
+        # command starts directly with the security tool itself.
+        # Example: ["nuclei", "-update-templates"] → ["C:/.../tools/nuclei/nuclei.exe", "-update-templates"]
+        # We must NOT replace generic interpreters like "python" for pip-based tools.
+        resolved_cmd = list(update_cmd)
+        if resolved_cmd:
+            first = str(resolved_cmd[0])
+            if first.lower() not in ("python", "python.exe", "py", "py.exe"):
+                tool_path = _find_tool(tool)
+                if tool_path:
+                    resolved_cmd[0] = tool_path
+
+        result = _run_command(resolved_cmd, timeout=180)
         if result["returncode"] == 0:
             updated.append(f"{tool}: updated")
         else:
