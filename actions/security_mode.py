@@ -22,6 +22,7 @@ from datetime import datetime
 import requests
 
 from core.audit import log_action
+from core.proxy_manager import get_requests_proxies, get_tool_proxy_arg, log_proxy_status
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,51 @@ TOOL_SPECS = {
         "executables": ["amass", "amass.exe"],
         "update_cmd": None,
         "install_hint": "https://github.com/owasp-amass/amass/releases",
+    },
+        "subfinder": {
+        "executables": ["subfinder", "subfinder.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/projectdiscovery/subfinder/releases",
+    },
+    "httpx": {
+        "executables": ["httpx", "httpx.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/projectdiscovery/httpx/releases",
+    },
+    "dnsx": {
+        "executables": ["dnsx", "dnsx.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/projectdiscovery/dnsx/releases",
+    },
+    "katana": {
+        "executables": ["katana", "katana.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/projectdiscovery/katana/releases",
+    },
+    "arjun": {
+        "executables": ["arjun", "arjun.py"],
+        "update_cmd": ["python", "-m", "pip", "install", "--upgrade", "arjun"],
+        "install_hint": "pip install arjun",
+    },
+    "wafw00f": {
+        "executables": ["wafw00f", "wafw00f.exe"],
+        "update_cmd": ["python", "-m", "pip", "install", "--upgrade", "wafw00f"],
+        "install_hint": "pip install wafw00f",
+    },
+    "dalfox": {
+        "executables": ["dalfox", "dalfox.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/hahwul/dalfox/releases",
+    },
+    "whatweb": {
+        "executables": ["whatweb", "whatweb.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/urbanadventurer/WhatWeb",
+    },
+    "trufflehog": {
+        "executables": ["trufflehog", "trufflehog.exe"],
+        "update_cmd": None,
+        "install_hint": "https://github.com/trufflesecurity/trufflehog/releases",
     },
     "gobuster": {
         "executables": ["gobuster", "gobuster.exe"],
@@ -113,6 +159,11 @@ TOOL_SPECS = {
         "executables": ["commix.py", "commix"],
         "update_cmd": None,
         "install_hint": "clone https://github.com/commixproject/commix",
+    },
+        "searchsploit": {
+        "executables": ["searchsploit", "searchsploit.exe"],
+        "update_cmd": ["searchsploit", "-u"],
+        "install_hint": "https://www.exploit-db.com/searchsploit",
     },
     "lfisuite": {
         "executables": ["lfisuite.py", "lfisuite"],
@@ -258,8 +309,6 @@ def update_tools() -> str:
 
 
 
-
-
 def _get_llm_insight(prompt: str) -> str:
     """
     Use Groq/Gemini to get tactical recommendations during the pentest.
@@ -288,6 +337,19 @@ def _get_llm_insight(prompt: str) -> str:
             return client.multi_turn(messages, temperature=0.2, max_tokens=1500)
         except Exception:
             return "No AI insight available."
+
+
+def _generate_ai_commands(domain: str, technologies: list[str], waf: list[str]) -> list[str]:
+    prompt = f"""
+Generate 5 safe, read-only curl commands to test for common web vulnerabilities on {domain}.
+Tech detected: {technologies}
+WAF detected: {waf}
+Return only the commands, one per line.
+"""
+    insight = _get_llm_insight(prompt)
+    lines = [line.strip() for line in insight.splitlines() if line.strip().startswith("curl")]
+    return lines[:5]
+
 
 
 def _detect_cms(domain: str, technologies: list[str]) -> str:
@@ -319,15 +381,92 @@ def _normalise_target(target: str) -> str:
     target = target.split("/")[0]
     return target
 
+def _run_subfinder(domain: str) -> list[str]:
+    tool = _find_tool("subfinder")
+    if not tool:
+        return []
+    cmd = [tool, "-d", domain, "-silent"]
+    r = _run_command(cmd, timeout=300)
+    return [line.strip().lower() for line in r["stdout"].splitlines() if line.strip() and line.endswith(domain)]
+
+def _run_httpx(domain: str) -> list[str]:
+    tool = _find_tool("httpx")
+    if not tool:
+        return []
+    cmd = [tool, "-u", f"https://{domain}", "-silent", "-status-code", "-title"]
+    r = _run_command(cmd, timeout=120)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_dnsx(domain: str) -> list[str]:
+    tool = _find_tool("dnsx")
+    if not tool:
+        return []
+    cmd = [tool, "-d", domain, "-silent", "-a", "-mx", "-ns"]
+    r = _run_command(cmd, timeout=120)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_katana(domain: str) -> list[str]:
+    tool = _find_tool("katana")
+    if not tool:
+        return []
+    cmd = [tool, "-u", f"https://{domain}", "-silent"]
+    r = _run_command(cmd, timeout=180)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()][:100]
+
+def _run_arjun(domain: str) -> list[str]:
+    tool = _find_tool("arjun")
+    if not tool:
+        return []
+    cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable"]
+    r = _run_command(cmd, timeout=600)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_dalfox(domain: str) -> list[str]:
+    tool = _find_tool("dalfox")
+    if not tool:
+        return []
+    cmd = [tool, "url", f"https://{domain}", "--silence"]
+    r = _run_command(cmd, timeout=600)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_wafw00f(domain: str) -> list[str]:
+    tool = _find_tool("wafw00f")
+    if not tool:
+        return []
+    cmd = [sys.executable, tool, f"https://{domain}"]
+    r = _run_command(cmd, timeout=180)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_whatweb(domain: str) -> list[str]:
+    tool = _find_tool("whatweb")
+    if not tool:
+        return []
+    cmd = [tool, f"https://{domain}"]
+    r = _run_command(cmd, timeout=120)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
+
+def _run_searchsploit(domain: str) -> list[str]:
+    tool = _find_tool("searchsploit")
+    if not tool:
+        return []
+    # Search for common service names based on open ports will be done later,
+    # for now use the domain as a general search.
+    cmd = [tool, domain]
+    r = _run_command(cmd, timeout=120)
+    return [line.strip() for line in r["stdout"].splitlines() if line.strip()][:20]
+
+
 
 def _enumerate_subdomains(domain: str) -> list[str]:
     """Gather subdomains using crt.sh and Amass/Sublist3r if available."""
     subs = set()
 
+
+
     # 1. crt.sh
     try:
         url = f"https://crt.sh/?q=%.{domain}&output=json"
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url, timeout=30, proxies=get_requests_proxies())
         if resp.status_code == 200:
             data = resp.json()
             for entry in data:
@@ -418,6 +557,7 @@ def _brute_force_dirs(domain: str) -> list[str]:
                 timeout=5,
                 allow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0"},
+                proxies=get_requests_proxies(),
             )
             if resp.status_code in (200, 301, 302, 403, 401):
                 found.append(f"{path} (HTTP {resp.status_code})")
@@ -435,6 +575,7 @@ def _harvest_emails(domain: str) -> tuple[list[str], list[str]]:
                 f"{scheme}://{domain}",
                 timeout=10,
                 headers={"User-Agent": "Mozilla/5.0"},
+                proxies=get_requests_proxies(),
             )
             found = re.findall(
                 r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
@@ -455,7 +596,7 @@ def _check_pwned(email: str) -> list[str]:
     """Return breach names for an email using Have I Been Pwned."""
     try:
         url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}"
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=10, proxies=get_requests_proxies())
         if resp.status_code == 200:
             return [b.get("Name", "Unknown") for b in resp.json()]
     except Exception:
@@ -467,7 +608,7 @@ def _check_domain_breaches(domain: str) -> tuple[int, list[str]]:
     """Return number of breaches and names for a domain."""
     try:
         url = f"https://haveibeenpwned.com/api/v3/breaches?domain={domain}"
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=10, proxies=get_requests_proxies())
         if resp.status_code == 200:
             data = resp.json()
             return len(data), [b.get("Name", "Unknown") for b in data[:5]]
@@ -484,6 +625,7 @@ def _scrape_linkedin(domain: str) -> list[str]:
             f"https://{domain}",
             timeout=10,
             headers={"User-Agent": "Mozilla/5.0"},
+            proxies=get_requests_proxies(),
         )
         urls = re.findall(
             r'https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[^"\'<>\s]+',
@@ -514,6 +656,7 @@ def _detect_technologies(domain: str) -> list[str]:
             f"https://{domain}",
             timeout=10,
             headers={"User-Agent": "Mozilla/5.0"},
+            proxies=get_requests_proxies(),
         )
         headers = resp.headers
 
@@ -551,10 +694,12 @@ def _detect_waf(domain: str) -> list[str]:
     """Detect WAF from response headers."""
     waf = []
     try:
+
         resp = requests.get(
             f"https://{domain}",
             timeout=10,
             headers={"User-Agent": "Mozilla/5.0"},
+            proxies=get_requests_proxies(),
         )
         headers = resp.headers
         checks = {
@@ -572,6 +717,22 @@ def _detect_waf(domain: str) -> list[str]:
         pass
     return waf if waf else ["No WAF detected."]
 
+def _waf_bypass_probe(domain: str) -> list[str]:
+    payloads = [
+        "/../../etc/passwd",
+        "/%2e%2e/%2e%2e/etc/passwd",
+        "/..%252f..%252fetc/passwd",
+        "/%252e%252e/%252e%252e/etc/passwd",
+    ]
+    results = []
+    for payload in payloads:
+        try:
+            resp = requests.get(f"https://{domain}{payload}", timeout=10, proxies=get_requests_proxies())
+            if resp.status_code == 200 and "root:" in resp.text:
+                results.append(f"Possible traversal: {payload}")
+        except Exception:
+            pass
+    return results
 
 def _generate_dorks(domain: str) -> list[str]:
     """Generate OSINT Google/GitHub dorks."""
@@ -994,12 +1155,24 @@ def _generate_pdf(results: dict) -> Path:
     _write_pdf_section(pdf, "[19] SSL/TLS CERTIFICATE", ssl_lines)
     pdf.ln(4)
 
-
+    # AI insight and deep probes
     _write_pdf_section(pdf, "[20] AI TACTICAL INSIGHT", [results.get("ai_insight", "No insight.")], max_items=50)
     pdf.ln(3)
     _write_pdf_section(pdf, "[21] DEEP PROBE FINDINGS", results.get("deep_findings", []))
     pdf.ln(4)
 
+    # Extra advanced sections
+    for idx, (title, key) in enumerate([
+        ("LIVE URLs", "live_urls"),
+        ("CRAWLED URLs", "crawled_urls"),
+        ("HIDDEN PARAMETERS", "hidden_params"),
+        ("WAF DETECTION", "waf_detection"),
+        ("WHATWEB TECHNOLOGIES", "whatweb"),
+        ("AI GENERATED COMMANDS", "ai_commands"),
+        ("WAF BYPASS PROBES", "waf_bypass"),
+    ], start=1):
+        _write_pdf_section(pdf, f"[{21 + idx}] {title}", results.get(key, []))
+        pdf.ln(3)
 
     # Executive summary
     total_ports = sum(len(h.get("open_ports", [])) for h in results.get("nmap_hosts", []))
@@ -1013,10 +1186,11 @@ def _generate_pdf(results: dict) -> Path:
         f"Exploit findings: {len(results.get('sqlmap_findings', [])) + len(results.get('xsstrike_findings', [])) + len(results.get('commix_findings', [])) + len(results.get('lfisuite_findings', []))}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
     ]
-    _write_pdf_section(pdf, "[20] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[29] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
+
 
 # ---------------------------------------------------------------------------
 # Main Dispatcher
@@ -1085,6 +1259,7 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
 
     Returns a concise spoken summary and PDF path.
     """
+
     action = (parameters or {}).get("action", "full").lower().strip()
     target = (parameters or {}).get("target", "").strip()
     confirmed = str((parameters or {}).get("confirmed", "")).lower()
@@ -1115,6 +1290,17 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
 
     # --------------------------- Recon ---------------------------
     results["subdomains"] = _enumerate_subdomains(domain)
+    # Add new reconnaissance results if tools are installed
+    subfinder_subs = _run_subfinder(domain)
+    if subfinder_subs:
+        results["subdomains"] = sorted(set(results["subdomains"] + subfinder_subs))
+
+    results["live_urls"] = _run_httpx(domain)
+    results["dns_records"] = _run_dnsx(domain) or results.get("dns_records", [])
+    results["crawled_urls"] = _run_katana(domain)
+    results["hidden_params"] = _run_arjun(domain)
+    results["waf_detection"] = _run_wafw00f(domain) or results.get("waf", [])
+    results["whatweb"] = _run_whatweb(domain)
     results["directories"] = _brute_force_dirs(domain)
     emails, guesses = _harvest_emails(domain)
     results["emails"] = emails
@@ -1136,6 +1322,13 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     results["technologies"] = _detect_technologies(domain)
     results["waf"] = _detect_waf(domain)
     results["dorks"] = _generate_dorks(domain)
+
+    results["ai_commands"] = _generate_ai_commands(
+        domain,
+        results.get("technologies", []),
+        results.get("waf", []),
+    )
+    results["waf_bypass"] = _waf_bypass_probe(domain)
 
     # --------------------------- Scan ---------------------------
     nmap_data = _run_nmap(domain)
@@ -1184,7 +1377,6 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
 
     # --------------------------- Report ---------------------------
     filepath = _generate_pdf(results)
-
     total_ports = sum(len(h.get("open_ports", [])) for h in results["nmap_hosts"])
     exploit_count = (
         len(results.get("sqlmap_findings", []))

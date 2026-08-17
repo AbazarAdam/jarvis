@@ -1076,43 +1076,28 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _toggle_interrupt(self):
-        """Toggle between interrupt and resume."""
-        if self._interrupt_flag.is_set():
-            # Resume
-            self._interrupt_flag.clear()
-            self._log.append_log("SYS: ▶ Resumed.")
-            if not self._muted:
+        """Request full hard reset: kill all tasks, go offline, then come back online."""
+        self._log.append_log("SYS: ⏹ HARD RESET requested.")
+        self._apply_state("RESTARTING")
+        self._interrupt_btn.setEnabled(False)
+
+        if self._hard_reset_callback:
+            try:
+                threading.Thread(target=self._hard_reset_callback, daemon=True).start()
+            except Exception as e:
+                self._log.append_log(f"ERR: Hard reset failed: {e}")
+                self._interrupt_btn.setEnabled(True)
                 self._apply_state("LISTENING")
         else:
-            # Stop everything
-            self._interrupt_flag.set()
-            self._log.append_log("SYS: ⏹ Stop requested.")
-        self._update_interrupt_btn()
+            self._log.append_log("ERR: Hard reset callback not set.")
+            self._interrupt_btn.setEnabled(True)
+            self._apply_state("LISTENING")
 
-    def _update_interrupt_btn(self):
-        """Update button text and colour based on interrupt state."""
-        if self._interrupt_flag.is_set():
-            self._interrupt_btn.setText("▶  RESUME")
-            self._interrupt_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #001a0d; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 3px;
-                }}
-                QPushButton:hover {{
-                    background: #002215; border: 1px solid #55ff88;
-                }}
-            """)
-        else:
-            self._interrupt_btn.setText("⏹  STOP")
-            self._interrupt_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #140006; color: {C.RED};
-                    border: 1px solid {C.RED}; border-radius: 3px;
-                }}
-                QPushButton:hover {{
-                    background: #1f000a; border: 1px solid #ff5577;
-                }}
-            """)
+    def reset_complete(self):
+        """Re-enable STOP button and mark JARVIS as listening after a reset."""
+        self._interrupt_btn.setEnabled(True)
+        self._apply_state("LISTENING")
+        # "JARVIS online" is already logged by run()
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1133,6 +1118,7 @@ class MainWindow(QMainWindow):
         self._muted           = False
         self._current_file: str | None = None
         self._interrupt_flag = threading.Event()
+        self._hard_reset_callback = None
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -1667,7 +1653,7 @@ class MainWindow(QMainWindow):
         self._setup_progress.hide()
         lay.addWidget(self._setup_progress)
 
-        lay.addWidget(_fl("© STARK INDUSTRIES", C.PRI_DIM))
+        lay.addWidget(_fl("© Made with ❤️", C.PRI_DIM))
         return w
 
     def _update_setup_progress(self, text: str, percent: int):
@@ -1823,7 +1809,18 @@ class JarvisUI:
     @property
     def interrupt_flag(self) -> threading.Event:
         return self._win._interrupt_flag
-    
+
+    @property
+    def on_hard_reset(self):
+        return self._win._hard_reset_callback
+
+    @on_hard_reset.setter
+    def on_hard_reset(self, cb):
+        self._win._hard_reset_callback = cb
+
+    def reset_complete(self):
+        self._win.reset_complete()
+
     @property
     def muted(self) -> bool:
         return self._win._muted

@@ -46,6 +46,8 @@ PIP_TOOLS = {
     "dirsearch": "dirsearch",
     "sublist3r": "sublist3r",
     "droopescan": "droopescan",
+    "arjun": "arjun",
+    "wafw00f": "wafw00f",
     "sqlmap": "sqlmap",
 }
 
@@ -74,6 +76,34 @@ BINARY_TOOLS = {
     "gobuster": {
         "repo": "OJ/gobuster",
         "asset_patterns": ["Windows_x86_64.zip", "windows_amd64.zip"],
+    },
+    "subfinder": {
+        "repo": "projectdiscovery/subfinder",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+    },
+    "httpx": {
+        "repo": "projectdiscovery/httpx",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+    },
+    "dnsx": {
+        "repo": "projectdiscovery/dnsx",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+    },
+    "katana": {
+        "repo": "projectdiscovery/katana",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+    },
+    "dalfox": {
+        "repo": "hahwul/dalfox",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
+    },
+    "whatweb": {
+        "repo": "urbanadventurer/WhatWeb",
+        "asset_patterns": ["windows.zip", "windows_amd64.zip"],
+    },
+    "trufflehog": {
+        "repo": "trufflesecurity/trufflehog",
+        "asset_patterns": ["windows_amd64.zip", "windows_amd64.zip"],
     },
     "ffuf": {
         "repo": "ffuf/ffuf",

@@ -58,6 +58,13 @@ PLUGIN_DIR = BASE_DIR / "plugins"
 PLUGIN_DECLARATIONS = []
 PLUGIN_FUNCTIONS = {}
 
+
+class HardResetException(Exception):
+    """Raised inside the session loop to force a full restart."""
+    pass
+
+
+
 def load_plugins():
     """Scan the plugins/ folder and register any valid plugins."""
     global PLUGIN_DECLARATIONS, PLUGIN_FUNCTIONS
@@ -649,9 +656,18 @@ class JarvisLive:
         # LLM client placeholder; will be assigned once local setup completes.
         self.llm = None
 
+
         self._last_response = ""
         self._response_lock = threading.Lock()
         self.background_tasks = {}
+
+        # Hard reset support
+        self._hard_reset_event = threading.Event()
+        self._hard_reset_triggered = False
+        self._stop_background_event = threading.Event()
+        self._background_threads = {}
+        self._ready_for_text = False
+
 
 
     def _clean_transcript(self, text: str) -> str:
@@ -669,7 +685,8 @@ class JarvisLive:
             return self._last_response
 
     def _on_text_command(self, text: str):
-        if not self._loop or not self.session:
+        if not self._loop or not self.session or not self._ready_for_text:
+            self.ui.write_log("SYS: JARVIS is still restarting. Please wait.")
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -678,6 +695,7 @@ class JarvisLive:
             ),
             self._loop
         )
+
 
     def _enqueue_out(self, item):
         """Synchronous helper to safely put an item into the out_queue from
@@ -753,8 +771,80 @@ class JarvisLive:
                 self._announce_local(f"{tool_name} failed, sir.")
                 from core.audit import log_action
                 log_action(tool_name, args, result=str(e), status="failed")
-        threading.Thread(target=wrapper, daemon=True).start()
+        thread = threading.Thread(target=wrapper, daemon=True)
+        self._background_threads[task_id] = thread
+        thread.start()
         return task_id
+
+    def cancel_all_background_tasks(self):
+        """Signal all background tasks to stop and clear tracking dicts."""
+        self._stop_background_event.set()
+
+        # Cancel any agent_task queue items
+        try:
+            from agent.task_queue import get_queue
+            queue = get_queue()
+            # Cancel running + pending tasks if the queue supports it
+            if hasattr(queue, "cancel_all"):
+                queue.cancel_all()
+            elif hasattr(queue, "cancel_task"):
+                # Cancel all known task ids if possible
+                for task_id in list(getattr(queue, "_tasks", {}).keys()):
+                    try:
+                        queue.cancel_task(task_id)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[JARVIS] ⚠️ Could not cancel task queue: {e}")
+
+        # Clear our own tracking dicts
+        self.background_tasks.clear()
+        self._background_threads.clear()
+
+    def request_hard_reset(self):
+        """Synchronous wrapper called from the UI thread to schedule hard_reset."""
+        if self._loop and not self._loop.is_closed():
+            try:
+                asyncio.run_coroutine_threadsafe(self.hard_reset(), self._loop)
+            except Exception as e:
+                print(f"[JARVIS] Hard reset scheduling failed: {e}")
+        else:
+            print("[JARVIS] Hard reset requested but event loop not ready.")
+
+    async def hard_reset(self):
+        """Full hard reset: cancel tasks, clear queues, and force session restart."""
+        print("[JARVIS] ⏹ Hard reset initiated.")
+        self.ui.write_log("SYS: Hard reset initiated.")
+
+        # Mark that a hard reset is in progress (used to distinguish from real errors)
+        self._hard_reset_triggered = True
+
+        # 1. Set event to trigger HardResetException in the receive loop
+        self._hard_reset_event.set()
+
+        # 2. Cancel background tasks (cooperative via stop event)
+        self.cancel_all_background_tasks()
+
+        # 3. Clear audio queues
+        if getattr(self, "audio_in_queue", None):
+            while not self.audio_in_queue.empty():
+                try:
+                    self.audio_in_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+        if getattr(self, "out_queue", None):
+            while not self.out_queue.empty():
+                try:
+                    self.out_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+        # 4. Reset speaking state and update UI
+        self.set_speaking(False)
+        self.ui.set_state("RESTARTING")
+
+
+
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -1019,7 +1109,7 @@ class JarvisLive:
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
 
-                def _run_agent_task(parameters, player=None):
+                def _run_agent_task(parameters, player=None, stop_event=None):
                     priority_map = {
                         "low": TaskPriority.LOW,
                         "normal": TaskPriority.NORMAL,
@@ -1036,6 +1126,14 @@ class JarvisLive:
                     )
                     import time as _time
                     while True:
+                        # Check if hard reset is requested
+                        if stop_event and stop_event.is_set():
+                            # Try to cancel the queued task
+                            try:
+                                get_queue().cancel_task(task_id)
+                            except Exception:
+                                pass
+                            return "Cancelled by user."
                         status = get_queue().get_status(task_id)
                         if status and status["status"] in ("completed", "failed", "cancelled"):
                             break
@@ -1047,7 +1145,16 @@ class JarvisLive:
                         or "Done."
                     )
 
-                self._start_background_tool("agent_task", args, _run_agent_task)
+                self._start_background_tool(
+                    "agent_task",
+                    args,
+                    lambda parameters, player=None: _run_agent_task(
+                        parameters,
+                        player,
+                        stop_event=self._stop_background_event
+                    )
+                )
+
                 self._announce_local(
                     "Agent task started in background, sir. I will notify you when complete."
                 )
@@ -1188,6 +1295,10 @@ class JarvisLive:
 
 
                 async for response in self.session.receive():
+                    # Hard reset requested → exit the session loop immediately
+                    if self._hard_reset_event.is_set():
+                        raise HardResetException()
+
                     # If interrupted, skip processing but keep the connection alive
                     if self.interrupt_flag.is_set():
                         continue
@@ -1356,16 +1467,51 @@ class JarvisLive:
                                 break
                     tg.create_task(_heartbeat())
 
+                    self.ui.reset_complete()
+                    self._ready_for_text = True
+
+            except HardResetException:
+                print("[JARVIS] Hard reset requested. Reconnecting...")
+                self._hard_reset_event.clear()   # allow next session to start clean
+                # Continue to the common cleanup below
+
+            except HardResetException:
+                print("[JARVIS] Hard reset requested. Reconnecting...")
+                self._hard_reset_event.clear()
+                self._hard_reset_triggered = False
+                # Continue to the common cleanup below
+
+            except BaseExceptionGroup as eg:
+                # TaskGroup can wrap the HardResetException into a BaseExceptionGroup
+                if self._hard_reset_triggered:
+                    print("[JARVIS] Hard reset completed.")
+                    self._hard_reset_event.clear()
+                    self._hard_reset_triggered = False
+                else:
+                    print(f"[JARVIS] ⚠️ Unhandled BaseExceptionGroup: {eg}")
+                    traceback.print_exception(eg)
+                    from datetime import datetime
+                    from pathlib import Path
+                    log_dir = Path(__file__).resolve().parent / "logs"
+                    log_dir.mkdir(exist_ok=True)
+                    with open(log_dir / "crash.log", "a", encoding="utf-8") as f:
+                        f.write(f"[{datetime.now()}] TASKGROUP ERROR\n{traceback.format_exc()}\n")
+
             except Exception as e:
                 print(f"[JARVIS] ⚠️ {e}")
                 traceback.print_exc()
-                # Log to crash file
-                from datetime import datetime
-                from pathlib import Path
-                log_dir = Path(__file__).resolve().parent / "logs"
-                log_dir.mkdir(exist_ok=True)
-                with open(log_dir / "crash.log", "a", encoding="utf-8") as f:
-                    f.write(f"[{datetime.now()}] ASYNCIO ERROR\n{traceback.format_exc()}\n")
+                # If the exception happened during a hard reset, don't log it as crash
+                if self._hard_reset_triggered:
+                    self._hard_reset_event.clear()
+                    self._hard_reset_triggered = False
+                else:
+                    # Log to crash file
+                    from datetime import datetime
+                    from pathlib import Path
+                    log_dir = Path(__file__).resolve().parent / "logs"
+                    log_dir.mkdir(exist_ok=True)
+                    with open(log_dir / "crash.log", "a", encoding="utf-8") as f:
+                        f.write(f"[{datetime.now()}] ASYNCIO ERROR\n{traceback.format_exc()}\n")
 
             self.set_speaking(False)
             self.ui.set_state("THINKING")
@@ -1401,6 +1547,9 @@ def main():
             ui.wait_for_api_key()
         load_plugins()
         jarvis = JarvisLive(ui)
+
+        # Connect the UI STOP button to hard reset
+        jarvis.ui.on_hard_reset = jarvis.request_hard_reset
 
         # Now the global error handler can speak through Jarvis
         import core.error_handler as eh

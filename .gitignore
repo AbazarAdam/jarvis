@@ -38,3 +38,6 @@ memory/shortcuts.json
 
 # Gmail email plugin token
 config/gmail_token_email.pickle
+tools/dnsx/
+tools/katana/
+tools/subfinder/
