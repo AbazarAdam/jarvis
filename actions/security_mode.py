@@ -1166,6 +1166,68 @@ def _write_pdf_section(pdf, title: str, items: list[str], max_items: int = 30):
             pdf.cell(0, 5, safe, ln=True)
 
 
+def _classify_findings(results: dict) -> dict:
+    """Classify all findings into severity buckets."""
+    classified = {"critical": [], "high": [], "medium": [], "low": [], "info": []}
+
+    def add(severity, text):
+        if text and text not in classified[severity]:
+            classified[severity].append(text)
+
+    # Nuclei findings often contain severity labels
+    for finding in results.get("nuclei_findings", []):
+        f = str(finding).lower()
+        if "critical" in f:
+            add("critical", finding)
+        elif "high" in f:
+            add("high", finding)
+        elif "medium" in f:
+            add("medium", finding)
+        elif "low" in f:
+            add("low", finding)
+        else:
+            add("info", finding)
+
+    # sqlmap confirmed injections → critical
+    for finding in results.get("sqlmap_findings", []):
+        add("critical", finding)
+
+    # XSS findings
+    for finding in results.get("xss_findings", results.get("xsstrike_findings", [])):
+        f = str(finding).lower()
+        if "stored" in f or "reflected" in f:
+            add("high", finding)
+        else:
+            add("medium", finding)
+
+    # WAF bypass attempts
+    for finding in results.get("waf_bypass", []):
+        add("medium", finding)
+
+    # Nikto findings
+    for finding in results.get("nikto_findings", []):
+        f = str(finding).lower()
+        if "critical" in f or "remote code execution" in f or "sql injection" in f:
+            add("critical", finding)
+        elif "high" in f or "xss" in f or "traversal" in f:
+            add("high", finding)
+        elif "medium" in f or "misconfig" in f:
+            add("medium", finding)
+        elif "low" in f:
+            add("low", finding)
+        else:
+            add("info", finding)
+
+    # Info-level metrics
+    total_ports = sum(len(h.get("open_ports", [])) for h in results.get("nmap_hosts", []))
+    add("info", f"Open ports: {total_ports}")
+    add("info", f"Subdomains discovered: {len(results.get('subdomains', []))}")
+    add("info", f"Sensitive paths: {len(results.get('directories', []))}")
+    add("info", f"SSL valid until: {results.get('ssl_info', {}).get('expires', 'unknown')}")
+
+    return classified
+
+
 def _generate_pdf(results: dict) -> Path:
     """Generate a clean, professional pentest report and return its path."""
     from fpdf import FPDF
@@ -1301,19 +1363,33 @@ def _generate_pdf(results: dict) -> Path:
         _write_pdf_section(pdf, f"[{24 + idx}] {title}", results.get(key, []))
         pdf.ln(3)
 
-    # Executive summary
+    # Severity classification
+    severity_data = _classify_findings(results)
+    severity_lines = []
+    for sev in ["critical", "high", "medium", "low", "info"]:
+        items = severity_data.get(sev, [])
+        if items:
+            severity_lines.append(f"--- {sev.upper()} ---")
+            severity_lines.extend(items[:15])
+            severity_lines.append("")  # blank line separator
+    _write_pdf_section(pdf, "[31] FINDINGS BY SEVERITY", severity_lines, max_items=100)
+    pdf.ln(3)
+
+    # Executive summary (renumbered)
     total_ports = sum(len(h.get("open_ports", [])) for h in results.get("nmap_hosts", []))
     summary_lines = [
         f"Target: {target}",
         f"Subdomains: {len(results.get('subdomains', []))}",
         f"Sensitive paths: {len(results.get('directories', []))}",
         f"Open ports: {total_ports}",
-        f"Web findings: {len(results.get('nikto_findings', []))}",
-        f"CVE findings: {len(results.get('nuclei_findings', []))}",
-        f"Exploit findings: {len(results.get('sqlmap_findings', [])) + len(results.get('xss_findings', [])) + len(results.get('commix_findings', [])) + len(results.get('lfisuite_findings', [])) + len(results.get('waf_bypass', []))}",
+        f"Critical findings: {len(severity_data.get('critical', []))}",
+        f"High findings: {len(severity_data.get('high', []))}",
+        f"Medium findings: {len(severity_data.get('medium', []))}",
+        f"Low findings: {len(severity_data.get('low', []))}",
+        f"Info findings: {len(severity_data.get('info', []))}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
     ]
-    _write_pdf_section(pdf, "[31] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[32] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
