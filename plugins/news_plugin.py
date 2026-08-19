@@ -21,9 +21,9 @@ PLUGIN_INFO = {
     "description": (
         "Fetches current, real-time news from authoritative cybersecurity, AI, "
         "and software engineering RSS feeds. Always uses the current system date. "
-        "Use this whenever the user asks for latest news, today's news, current events, "
-        "or up-to-date cybersecurity/AI/software developments. "
-        "Do not use web_search for news; use news instead."
+        "Use this tool for ANY news request, including 'search for AI news', "
+        "'latest cybersecurity news', 'today's tech news', 'what is happening in AI', etc. "
+        "This tool has priority over web_search for news. Never use web_search for news."
     ),
     "parameters": {
         "type": "OBJECT",

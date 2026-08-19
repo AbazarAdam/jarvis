@@ -1,11 +1,17 @@
 import asyncio
+import os
 import threading
 import concurrent.futures
 import platform
 import shutil
 import subprocess
+import time
+import random
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _get_default_browser_id() -> str:
@@ -158,6 +164,7 @@ class _BrowserThread:
         self._exe_path   = None
         self._channel    = None
         self._is_opera   = False
+        self._user_data_dir = None
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -194,11 +201,52 @@ class _BrowserThread:
         self._engine_name, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
         engine = getattr(self._playwright, self._engine_name)
 
-        chromium_args = ["--start-maximized"]
+        chromium_args = [
+            "--start-maximized",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
         if self._is_opera:
             chromium_args += ["--disable-features=OperaPrivacyMode", "--no-private"]
             print("[Browser] 🎭 Opera detected — disabling private-mode flags")
 
+        # ── 1. Try persistent Chrome profile (if not Opera) ─────────────────
+        if self._engine_name == "chromium" and not self._is_opera:
+            user_data_dir = self._get_chrome_user_data_dir()
+            if user_data_dir:
+                try:
+                    print(f"[Browser] 🔍 Using dedicated JARVIS Chrome profile: {user_data_dir}")
+
+                    launch_kwargs = {
+                        "headless": False,
+                        "args": chromium_args,
+                        "viewport": None,
+                        "user_agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36"
+                        ),
+                    }
+
+                    # Use the real installed Chrome, not Playwright's bundled Chromium
+                    if self._exe_path:
+                        launch_kwargs["executable_path"] = self._exe_path
+                    elif self._channel:
+                        launch_kwargs["channel"] = self._channel
+
+                    self._context = await engine.launch_persistent_context(
+                        user_data_dir,
+                        **launch_kwargs,
+                    )
+                    self._browser = self._context.browser
+                    print("[Browser] ✅ Launched dedicated JARVIS Chrome profile")
+                    return
+                except Exception as e:
+                    print(f"[Browser] ⚠️ Persistent profile launch failed ({e}) — falling back to temporary profile")
+
+        # ── 2. Fallback: normal launch with temporary profile ───────────────
         launch_kwargs = {"headless": False}
         if self._engine_name == "chromium":
             launch_kwargs["args"] = chromium_args
@@ -218,7 +266,7 @@ class _BrowserThread:
             print(f"[Browser] ⚠️ Launch failed ({e}), falling back to built-in Chromium")
             self._browser = await self._playwright.chromium.launch(
                 headless=False,
-                args=["--start-maximized"]
+                args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
             )
 
     async def _get_page(self):
@@ -230,10 +278,12 @@ class _BrowserThread:
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/120.0.0.0 Safari/537.36"
-                )
+                ),
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
             )
         if self._page is None or self._page.is_closed():
-            # If there are other pages, reuse the last active one
             pages = self._context.pages
             if pages:
                 self._page = pages[-1]
@@ -341,22 +391,47 @@ class _BrowserThread:
         if not url.startswith("http"):
             url = "https://" + url
         page = await self._get_page()
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            return f"Opened: {page.url}"
-        except PlaywrightTimeout:
-            return f"Timeout loading: {url}"
-        except Exception as e:
-            return f"Navigation error: {e}"
+        for attempt in range(2):
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await self._human_delay(0.5, 1.5)
+                return f"Opened: {page.url}"
+            except PlaywrightTimeout:
+                if attempt == 0:
+                    await self._human_delay(1, 2)
+                    continue
+                return f"Timeout loading: {url}"
+            except Exception as e:
+                return f"Navigation error: {e}"
+        return f"Timeout loading: {url}"
 
     async def _search(self, query: str, engine: str = "google") -> str:
-        engines = {
-            "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
-            "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
-            "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
-        }
-        url = engines.get(engine.lower(), engines["google"])
-        return await self._go_to(url)
+        page = await self._get_page()
+        original_engine = engine.lower()
+        fallback_engines = ["duckduckgo", "bing", "google"]
+        if original_engine in fallback_engines:
+            fallback_engines.remove(original_engine)
+        engines = [original_engine] + fallback_engines
+
+        last_result = ""
+        for eng in engines:
+            try:
+                url = self._build_search_url(query, eng)
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await self._human_delay(1.0, 2.5)
+
+                if eng == "google" and await self._detect_google_sorry(page):
+                    print("[Browser] ⚠️ Google CAPTCHA/sorry detected — trying next engine")
+                    continue
+
+                return f"Searched {eng}: {page.url}"
+
+            except Exception as e:
+                last_result = f"Search on {eng} failed: {e}"
+                print(f"[Browser] {last_result}")
+                continue
+
+        return last_result or "Search failed."
 
     async def _click(self, selector=None, text=None) -> str:
         page = await self._get_page()
@@ -477,6 +552,43 @@ class _BrowserThread:
         return "Browser closed."
 
 
+    def _get_chrome_user_data_dir(self) -> str | None:
+        """Return a dedicated JARVIS Chrome profile directory.
+
+        This avoids conflicts with the user's normal Chrome profile and
+        preserves logins/cookies across sessions.
+        """
+        jarvis_profile = BASE_DIR / "chrome_profile"
+        jarvis_profile.mkdir(parents=True, exist_ok=True)
+        return str(jarvis_profile)
+
+    async def _human_delay(self, min_sec: float = 0.5, max_sec: float = 2.0):
+        """Wait a random human-like amount of time."""
+        await asyncio.sleep(random.uniform(min_sec, max_sec))
+
+    def _build_search_url(self, query: str, engine: str) -> str:
+        engines = {
+            "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
+            "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
+            "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+        }
+        return engines.get(engine, engines["google"])
+
+    async def _detect_google_sorry(self, page) -> bool:
+        """Detect Google CAPTCHA / sorry index pages."""
+        try:
+            content = await page.content()
+            text = content.lower()
+            if "sorry/index" in page.url:
+                return True
+            if "unusual traffic" in text and "sorry" in text:
+                return True
+            if "recaptcha" in text or "captcha" in text:
+                return True
+        except Exception:
+            pass
+        return False
+
 # ── Singleton browser thread ─────────────────────────────────────────────────
 
 _bt         = _BrowserThread()
@@ -535,7 +647,7 @@ def browser_control(
         elif action == "search":
             result = _bt.run(_bt._search(
                 parameters.get("query", ""),
-                parameters.get("engine", "google"),
+                parameters.get("engine", "duckduckgo"),
             ))
 
         elif action == "click":
