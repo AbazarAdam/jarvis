@@ -68,36 +68,24 @@ def _fetch_unread_emails(max_results=5):
         return []
 
 
-def _search_news(query: str, num_results=3):
-    """Use DuckDuckGo to get top news headlines, filtering out AI disclaimers."""
+def _get_latest_news_items(category: str, limit: int = 3):
+    """Fetch latest news items from the real-time RSS news plugin."""
     try:
-        from actions.web_search import web_search
-        # Use a single, clean query without site: operators (they confuse the LLM)
-        result = web_search(parameters={"query": query, "mode": "search"}, player=None)
-        lines = result.strip().split('\n')
-        headlines = []
-        for line in lines:
-            clean = line.strip('-• *').strip()
-            # Skip lines that are clearly not headlines
-            if not clean or len(clean) < 25:
-                continue
-            if any(phrase in clean.lower() for phrase in [
-                'i cannot provide', 'as of my last update', 'i don’t have',
-                'i am unable', 'my knowledge is current', 'for the latest',
-                'you can visit', 'i recommend', 'here are some',
-                'please note', 'note:', 'source:', 'action:'
-            ]):
-                continue
-            # Skip lines that are just URLs
-            if clean.startswith('http'):
-                continue
-            headlines.append(clean)
-            if len(headlines) >= num_results:
-                break
-        return headlines if headlines else ["No specific headlines found."]
+        from plugins.news_plugin import get_latest_news
+        items = get_latest_news(category=category, max_age_days=7)
+        return items[:limit]
     except Exception as e:
-        print(f"[Brief] ⚠️ News search failed for '{query}': {e}")
-        return [f"Could not fetch news for {query}"]
+        print(f"[Brief] ⚠️ News plugin unavailable: {e}")
+        return []
+
+
+def _format_news_item(item: dict) -> str:
+    pub = item.get("published")
+    if pub:
+        pub_str = pub.strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        pub_str = "unknown date"
+    return f"{item.get('title','')} ({item.get('source','')}, {pub_str})"
 
 
 def _speak_report(text: str, speak_callback=None):
@@ -130,15 +118,23 @@ def morning_brief(
 
     # 1. Cybersecurity News
     report_lines.append("\n🔐 CYBERSECURITY HEADLINES")
-    cyber_news = _search_news("latest cybersecurity news today", 3)
-    for i, headline in enumerate(cyber_news, 1):
-        report_lines.append(f"  {i}. {headline}")
+    cyber_items = _get_latest_news_items("cybersecurity", 3)
+    if cyber_items:
+        for i, item in enumerate(cyber_items, 1):
+            report_lines.append(f"  {i}. {_format_news_item(item)}")
+    else:
+        report_lines.append("  No current cybersecurity news found.")
 
     # 2. AI & Software Engineering News
     report_lines.append("\n🤖 AI & SOFTWARE ENGINEERING NEWS")
-    ai_news = _search_news("latest AI software engineering news today", 3)
-    for i, headline in enumerate(ai_news, 1):
-        report_lines.append(f"  {i}. {headline}")
+    ai_items = _get_latest_news_items("ai", 2)
+    sw_items = _get_latest_news_items("software", 2)
+    combined_ai_items = (ai_items + sw_items)[:3]
+    if combined_ai_items:
+        for i, item in enumerate(combined_ai_items, 1):
+            report_lines.append(f"  {i}. {_format_news_item(item)}")
+    else:
+        report_lines.append("  No current AI/software news found.")
 
     # 3. Unread Emails
     report_lines.append("\n📧 UNREAD EMAILS")
@@ -169,8 +165,8 @@ def morning_brief(
     # Always speak a condensed version
     if speak:
         # Build a concise spoken brief — no links, just headlines
-        cyber_spoken = cyber_news[0][:120] if cyber_news else "no cybersecurity updates"
-        ai_spoken = ai_news[0][:120] if ai_news else "no AI news"
+        cyber_spoken = cyber_items[0]["title"][:120] if cyber_items else "no cybersecurity updates"
+        ai_spoken = combined_ai_items[0]["title"][:120] if combined_ai_items else "no AI news"
         spoken = (
             f"Good morning, sir. "
             f"In cybersecurity: {cyber_spoken}. "
