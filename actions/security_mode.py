@@ -584,7 +584,11 @@ def _enumerate_subdomains(domain: str) -> list[str]:
             )
             for line in (r["stdout"] + "\n" + r["stderr"]).splitlines():
                 line = line.strip().lower()
-                if line.endswith(domain) and line != domain:
+                # Ignore banners, progress messages, and log lines.
+                if not line or line.startswith(("[", "-", "*")):
+                    continue
+                # Only accept clean subdomain-looking tokens.
+                if re.fullmatch(r"[a-z0-9.-]+", line) and line.endswith(domain) and line != domain:
                     subs.add(line)
         except Exception:
             pass

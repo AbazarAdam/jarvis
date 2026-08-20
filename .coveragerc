@@ -4,13 +4,21 @@ source =
     agent
     memory
     core
+    plugins
+
 omit =
     .venv/*
     tests/*
     tools/*
-    plugins/*
     scripts/*
     */__pycache__/*
+    config/*
+    main.py
+    ui.py
+    server.py
+    offline_voice.py
+    or_client.py
+    groq_client.py
 
 [report]
 exclude_lines =

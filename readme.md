@@ -3,10 +3,10 @@
 *A real-time, voice-first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
 
 ![CI](https://github.com/AbazarAdam/jarvis/actions/workflows/ci.yml/badge.svg)
-![Tests](https://img.shields.io/badge/tests-58%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-83%20passed-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-yellow)
-![Coverage](https://img.shields.io/badge/coverage-6%25-red)
+![Coverage](https://img.shields.io/badge/coverage-27%25-red)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
 
 ---

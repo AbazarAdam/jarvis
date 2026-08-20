@@ -27,7 +27,7 @@ from datetime import datetime
 import subprocess, sys
 
 
-import google.generativeai as genai
+from google import genai as _google_genai
 
 
 def _get_api_key() -> str:
@@ -35,6 +35,36 @@ def _get_api_key() -> str:
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
+
+class _LegacyGenAI:
+    """Small compatibility shim so existing file_processor code still works
+    without importing the deprecated google.generativeai package."""
+    def __init__(self):
+        self._model_name = "gemini-2.5-flash"
+        self._client = None
+
+    def configure(self, *args, **kwargs):
+        """Keep old configure() calls harmless."""
+        return None
+
+    def GenerativeModel(self, model_name=None, **kwargs):
+        if model_name:
+            self._model_name = model_name
+        return self
+
+    def generate_content(self, prompt, **kwargs):
+        if self._client is None:
+            self._client = _google_genai.Client(
+                api_key=_get_api_key(),
+                http_options={"api_version": "v1beta"},
+            )
+        return self._client.models.generate_content(
+            model=self._model_name,
+            contents=prompt,
+        )
+
+
+genai = _LegacyGenAI()
 
 def _gemini_client():
     genai.configure(api_key=_get_api_key())
