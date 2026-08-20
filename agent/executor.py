@@ -10,6 +10,8 @@ from typing import Callable
 
 from agent.planner       import create_plan, replan
 from agent.error_handler import analyze_error, generate_fix, ErrorDecision
+from core.execution_guard import preflight_tool_call
+from core.skill_store import SkillStore
 
 
 def get_base_dir() -> Path:
@@ -179,6 +181,33 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
 
 def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
 
+    # ------------------------------------------------------------------
+    # CORTEX + SAFETY PREFLIGHT — same gate as main.py
+    # ------------------------------------------------------------------
+    if tool != "skill_runner":
+        try:
+            from main import TOOL_DECLARATIONS, PLUGIN_DECLARATIONS
+
+            try:
+                learned_skills = SkillStore().list_skills(include_all=False)
+            except Exception:
+                learned_skills = []
+
+            guard_decision = preflight_tool_call(
+                name=tool,
+                parameters=parameters,
+                tool_declarations=TOOL_DECLARATIONS,
+                plugin_declarations=PLUGIN_DECLARATIONS,
+                skills=learned_skills,
+            )
+
+            if not guard_decision.get("allowed"):
+                reason = guard_decision.get("reason", "Blocked by execution guard.")
+                print(f"[Executor] 🚫 Blocked {tool}: {reason}")
+                return f"Blocked by execution guard: {reason}"
+        except Exception as guard_err:
+            print(f"[Executor] ⚠️ Execution guard error: {guard_err}")
+
     if tool == "open_app":
         from actions.open_app import open_app
         return open_app(parameters=parameters, player=None) or "Done."
@@ -245,6 +274,10 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
     elif tool == "cmd_control":
         from actions.cmd_control import cmd_control
         return cmd_control(parameters=parameters, player=None) or "Done."
+
+    elif tool == "skill_runner":
+        from plugins.skill_runner import execute as skill_runner_execute
+        return skill_runner_execute(parameters=parameters, player=None, speak=speak) or "Done."
 
     else:
         print(f"[Executor] ⚠️ Unknown tool '{tool}' — falling back to generated_code")

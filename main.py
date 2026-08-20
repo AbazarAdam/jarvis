@@ -918,6 +918,39 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         log_action(name, args, status="started")
 
+        # ------------------------------------------------------------------
+        # CORTEX + SAFETY PREFLIGHT
+        # ------------------------------------------------------------------
+        try:
+            from core.execution_guard import preflight_tool_call
+            from core.skill_store import SkillStore
+
+            try:
+                learned_skills = SkillStore().list_skills(include_all=False)
+            except Exception:
+                learned_skills = []
+
+            guard_decision = preflight_tool_call(
+                name=name,
+                parameters=args,
+                tool_declarations=TOOL_DECLARATIONS,
+                plugin_declarations=PLUGIN_DECLARATIONS,
+                skills=learned_skills,
+            )
+
+            if not guard_decision.get("allowed"):
+                reason = guard_decision.get("reason", "Blocked by execution guard.")
+                log_action(name, args, result=f"Blocked: {reason}", status="blocked")
+                self.speak_error(name, reason)
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={"result": f"Blocked: {reason}"},
+                )
+        except Exception as guard_error:
+            # Guard failure should not crash the whole tool loop.
+            print(f"[JARVIS] ⚠️ Execution guard error: {guard_error}")
+
         # Ensure result always exists, even for early returns
         result = "Done."
 

@@ -1,4 +1,4 @@
-# J.A.R.V.I.S — Architecture Document v1.0
+# J.A.R.V.I.S — Architecture Document v1.1
 
 A comprehensive technical reference for the internal design, data flow, and component interaction of the JARVIS voice assistant.
 
@@ -14,6 +14,15 @@ JARVIS is a **real-time AI assistant** with:
 Both modes share a common **tool execution layer**, a persistent **memory system**, and a **PyQt6-based HUD** that displays system metrics, conversation logs, and file drop-zone capabilities.
 
 The central orchestrator is `main.py`. It decides which mode to activate based on internet connectivity and then either connects to Gemini Live or falls back to the offline voice assistant.
+
+A **Self‑Learning Cortex** sits above the tool layer and provides:
+
+- Goal interpretation and conflict resolution
+- Safety-gated execution
+- Safe sandboxed code execution
+- Cloud model routing with fallback
+- Learned skill creation, validation, storage, and execution
+- CVE correlation / attack-chain reasoning for red-team operations
 
 ---
 
@@ -59,11 +68,30 @@ JARVIS/
 ├── ui.py
 ├── server.py
 ├── core/
+│   ├── prompt.txt
+│   ├── error_handler.py
+│   ├── audit.py
+│   ├── proactive.py
+│   ├── self_heal.py
+│   ├── proxy_manager.py
+│   ├── safety.py
+│   ├── sandbox.py
+│   ├── cortex.py
+│   ├── execution_guard.py
+│   ├── model_router.py
+│   ├── skill_store.py
+│   ├── skill_validator.py
+│   └── skill_synthesizer.py
 ├── config/
 ├── actions/
+│   ├── security_mode.py
+│   └── attack_chain.py
 ├── agent/
 ├── memory/
+│   ├── skills/
+│   └── long_term.json
 ├── plugins/
+│   └── skill_runner.py
 ├── tools/
 ├── docs/
 ├── logs/
@@ -80,6 +108,8 @@ When a tool is invoked:
 
 * **Online:** `JarvisLive._execute_tool()` receives the function call, identifies the tool name, and dispatches to the appropriate module.
 * **Plugins:** Dispatched through `PLUGIN_FUNCTIONS` after being auto-loaded from `plugins/`.
+* **Safety Gate:** Before execution, every tool passes through `core/execution_guard.py` and `core/cortex.py` for risk assessment, conflict resolution, and parameter validation.
+* **Learned Skills:** If no built-in or plugin tool matches, `plugins/skill_runner.py` can create, validate, and run a learned skill.
 
 The tool modules return a short string result, which is spoken by the voice layer and logged in the UI.
 
@@ -101,13 +131,63 @@ The tool modules return a short string result, which is spoken by the voice laye
 * Scrolling and form automation
 * Page text extraction
 
-#### `cyber_recon.py`
+#### `security_mode.py`
 
 * OSINT and subdomain enumeration
 * Breach checks
 * Nmap and Nikto scanning
 * SSL analysis
 * PDF reporting
+
+#### `attack_chain.py`
+
+* Service/version extraction from Nmap and technology data
+* NVD CVE correlation
+* Attack-chain construction
+* Safe PoC command generation
+
+#### `core/safety.py`
+
+* Filesystem path safety
+* Destructive command blocking
+* Risk-level enforcement
+
+#### `core/sandbox.py`
+
+* Safe Python execution for generated/learned code
+* Static AST validation
+* Timeout and output limits
+
+#### `core/cortex.py`
+
+* Goal interpretation
+* Capability selection
+* Tool conflict resolution
+
+#### `core/execution_guard.py`
+
+* Pre-execution gate for every tool call
+* Path and command validation
+
+#### `core/model_router.py`
+
+* Cloud model fallback
+* Provider cooldown / rate-limit handling
+
+#### `core/skill_store.py`
+
+* Persistent skill storage
+* De-duplication and lifecycle management
+
+#### `core/skill_validator.py`
+
+* Candidate skill execution
+* Success/failure tracking and promotion
+
+#### `core/skill_synthesizer.py`
+
+* Natural-language to Python skill generation
+* Retry and error correction
 
 #### `screen_processor.py`
 
@@ -152,15 +232,19 @@ Structured user data is stored in `memory/long_term.json`.
 
 Memory is extracted after conversations, merged into the JSON file, and injected into the system prompt on startup.
 
+In addition to structured user facts, JARVIS now maintains a learned skill store under `memory/skills/`. Skills are small validated Python scripts that represent reusable capabilities. Only skills that pass sandbox validation and prove useful are promoted to active.
+
 ---
 
 ## 6. Interrupt / Resume System
 
-A global **STOP** button halts speech, tool execution, and agent tasks.
+A global **STOP** button performs a full hard reset.
 
-* STOP sets a shared interrupt flag.
-* RESUME clears it.
-* Running tasks check the flag and terminate safely.
+* STOP cancels running background tasks.
+* STOP cancels agent task queue items.
+* STOP closes and reconnects the Gemini Live session.
+* STOP clears temporary audio buffers and restarts audio streams.
+* Learned skills and long-term memory are not deleted.
 
 ---
 
@@ -206,6 +290,9 @@ A heartbeat message is sent every 45 seconds to keep the Gemini Live session ali
 * Global crash logging
 * Agent retry and replanning
 * LLM error logging
+* Execution guard safety logging
+* Sandbox validation and execution logging
+* Model router provider cooldown logging
 
 ---
 
@@ -215,7 +302,10 @@ A heartbeat message is sent every 45 seconds to keep the Gemini Live session ali
 * Remote access is disabled unless explicitly enabled.
 * File operations are limited to the user environment by default.
 * External communication occurs only for configured APIs and web requests.
+* Generated code runs inside `core/sandbox.py` with restricted imports and timeouts.
+* Dangerous system commands are blocked by `core/safety.py`.
+* Tool execution is gated by `core/execution_guard.py`.
 
 ---
 
-*Architecture document maintained by Abazar Adam — v1.0, August 2026.*
+*Architecture document maintained by Abazar Adam — v1.1, August 2026.*

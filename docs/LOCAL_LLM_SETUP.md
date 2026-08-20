@@ -1,6 +1,9 @@
-# J.A.R.V.I.S — Local LLM Setup
+# J.A.R.V.I.S — Local LLM Setup (Optional / Disabled by Default)
 
 Optional local/offline AI configuration for JARVIS.
+
+> **Current v1.1 status:**  
+> JARVIS v1.1 does **not** use a local LLM by default. This guide is kept for future optional offline use.
 
 ---
 
@@ -106,4 +109,4 @@ ollama pull llama3.1:8b
 
 ---
 
-*Maintained for JARVIS v1.0 — August 2026.*
+*Maintained for JARVIS v1.1 — August 2026.*

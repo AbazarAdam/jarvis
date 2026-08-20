@@ -1,4 +1,4 @@
-# J.A.R.V.I.S – Just A Rather Very Intelligent System v1.0
+# J.A.R.V.I.S – Just A Rather Very Intelligent System v1.1
 
 *A real-time, voice-first AI assistant for Windows. Control your computer, automate complex workflows, and stay productive — all through natural conversation.*
 
@@ -76,6 +76,32 @@ flowchart TB
 
 ---
 
+## 🧠 Self‑Learning Cortex
+
+JARVIS v1.1 introduces a brain layer that enables:
+
+- Goal interpretation and tool conflict resolution
+- Safety-gated execution
+- Safe code sandboxing
+- Cloud model routing with automatic fallback
+- Learned skill creation, validation, storage, and execution
+- Real red-team attack-chain correlation
+
+| Module | Role |
+|---|---|
+| `core/cortex.py` | Goal interpreter + capability selector |
+| `core/safety.py` | Filesystem/command/risk safety boundary |
+| `core/sandbox.py` | Safe generated-code execution |
+| `core/execution_guard.py` | Pre-execution gate for all tools |
+| `core/model_router.py` | Central cloud model orchestrator |
+| `core/skill_store.py` | Persistent de-duplicated skill storage |
+| `core/skill_validator.py` | Skill validation and execution |
+| `core/skill_synthesizer.py` | Autonomous skill creation |
+| `plugins/skill_runner.py` | Exposes learned skills to JARVIS |
+| `actions/attack_chain.py` | CVE correlation and attack-path reasoning |
+
+---
+
 ## ⚡ Core Capabilities
 
 ### 🖥️ System Control
@@ -117,6 +143,17 @@ Give JARVIS a complex goal, and the planner automatically breaks it into steps s
 
 * Web search → Collect results → Write file
 * Error recovery and automatic replanning
+
+### 🧠 Self-Learning & Safety
+
+JARVIS can now learn new skills by itself, validate them safely, and reuse them later.
+
+* Generates new Python skills from natural language
+* Tests generated code inside a restricted sandbox
+* Promotes only proven successful skills
+* De-duplicates similar skills automatically
+* Enforces filesystem and command safety boundaries
+* Routes LLM calls across providers with fallback and cooldown
 
 ### 🧠 Long-Term Memory
 
@@ -182,6 +219,68 @@ Install the following external tools:
 git clone https://github.com/sullo/nikto tools/nikto
 ```
 
+---
+
+---
+
+## 📁 Project Structure
+
+```text
+JARVIS/
+├── main.py                    # Main orchestrator, JarvisLive class, tools
+├── ui.py                      # PyQt6 GUI
+├── server.py                  # Flask remote dashboard + ngrok
+├── core/
+│   ├── prompt.txt             # System prompt
+│   ├── error_handler.py       # Global crash recovery
+│   ├── audit.py               # Audit logging
+│   ├── proactive.py           # Proactive assistance engine
+│   ├── self_heal.py           # Self‑healing system
+│   ├── proxy_manager.py       # Proxy configuration
+│   ├── safety.py              # Safety boundary
+│   ├── sandbox.py             # Safe code execution
+│   ├── cortex.py              # Goal interpreter / conflict resolver
+│   ├── execution_guard.py     # Pre-execution gate
+│   ├── model_router.py        # Cloud LLM router
+│   ├── skill_store.py         # Skill persistence
+│   ├── skill_validator.py     # Skill validation
+│   └── skill_synthesizer.py   # Autonomous skill creation
+├── actions/
+│   ├── security_mode.py       # Red-team pentest engine
+│   ├── attack_chain.py        # CVE correlation & attack paths
+│   ├── code_helper.py         # Code helper
+│   ├── dev_agent.py           # Full project builder
+│   ├── reminder.py            # Persistent reminders
+│   ├── browser_control.py     # Playwright browser automation
+│   ├── file_controller.py     # File CRUD
+│   ├── file_processor.py      # Document conversion/summarisation
+│   ├── computer_settings.py   # Volume, brightness, windows
+│   ├── computer_control.py    # Mouse/keyboard/screenshot
+│   └── morning_brief.py       # Morning news + emails
+├── plugins/
+│   ├── security_tool_manager.py
+│   ├── git_plugin.py
+│   ├── email_plugin.py
+│   ├── system_management.py
+│   ├── learning_mode.py
+│   ├── tell_time.py
+│   ├── news_plugin.py
+│   └── skill_runner.py
+├── agent/
+│   ├── executor.py
+│   ├── planner.py
+│   ├── task_queue.py
+│   └── error_handler.py
+├── memory/
+│   ├── memory_manager.py
+│   ├── long_term.json
+│   ├── skills/
+│   └── shortcuts.json
+├── tools/                     # External security tools
+├── tests/
+├── docs/
+├── requirements.txt
+└── Dockerfile
 ---
 
 ## 📦 Quick Start

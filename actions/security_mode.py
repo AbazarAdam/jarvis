@@ -1200,6 +1200,20 @@ def _classify_findings(results: dict) -> dict:
         else:
             add("medium", finding)
 
+    # Correlated CVE findings
+    for finding in results.get("correlated_findings", []):
+        f = str(finding).lower()
+        if "critical" in f:
+            add("critical", finding)
+        elif "high" in f:
+            add("high", finding)
+        elif "medium" in f:
+            add("medium", finding)
+        elif "low" in f:
+            add("low", finding)
+        else:
+            add("info", finding)
+
     # WAF bypass attempts
     for finding in results.get("waf_bypass", []):
         add("medium", finding)
@@ -1223,7 +1237,8 @@ def _classify_findings(results: dict) -> dict:
     add("info", f"Open ports: {total_ports}")
     add("info", f"Subdomains discovered: {len(results.get('subdomains', []))}")
     add("info", f"Sensitive paths: {len(results.get('directories', []))}")
-    add("info", f"SSL valid until: {results.get('ssl_info', {}).get('expires', 'unknown')}")
+    ssl_info = results.get("ssl_info") or {}
+    add("info", f"SSL valid until: {ssl_info.get('expires', 'unknown')}")
 
     return classified
 
@@ -1363,6 +1378,10 @@ def _generate_pdf(results: dict) -> Path:
         _write_pdf_section(pdf, f"[{24 + idx}] {title}", results.get(key, []))
         pdf.ln(3)
 
+    # Attack chain correlation
+    _write_pdf_section(pdf, "[31] ATTACK CHAINS / CVE CORRELATION", results.get("correlated_findings", []), max_items=60)
+    pdf.ln(3)
+
     # Severity classification
     severity_data = _classify_findings(results)
     severity_lines = []
@@ -1372,7 +1391,7 @@ def _generate_pdf(results: dict) -> Path:
             severity_lines.append(f"--- {sev.upper()} ---")
             severity_lines.extend(items[:15])
             severity_lines.append("")  # blank line separator
-    _write_pdf_section(pdf, "[31] FINDINGS BY SEVERITY", severity_lines, max_items=100)
+    _write_pdf_section(pdf, "[33] FINDINGS BY SEVERITY", severity_lines, max_items=100)
     pdf.ln(3)
 
     # Executive summary (renumbered)
@@ -1389,7 +1408,7 @@ def _generate_pdf(results: dict) -> Path:
         f"Info findings: {len(severity_data.get('info', []))}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
     ]
-    _write_pdf_section(pdf, "[32] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[33] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
@@ -1536,6 +1555,7 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     # --------------------------- Scan ---------------------------
     nmap_data = _run_nmap(domain)
     results["nmap_hosts"] = nmap_data.get("hosts", [])
+    results["nmap_raw"] = nmap_data.get("raw", "")
     results["nmap_ports"] = [
         f"{h['ip']}: {', '.join(h['open_ports'])}"
         for h in results["nmap_hosts"]
@@ -1609,6 +1629,17 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     results["ai_insight"] = deep.get("ai_insight", "")
     results["deep_findings"] = deep.get("deep_findings", [])
 
+    # --------------------------- Attack chain correlation ---------------------------
+    try:
+        from actions.attack_chain import correlate_vulnerabilities
+        attack_results = correlate_vulnerabilities(domain, results)
+        results["attack_chains"] = attack_results.get("attack_chains", [])
+        results["correlated_findings"] = attack_results.get("correlated_findings", [])
+    except Exception as e:
+        print(f"[SecurityMode] ⚠️ Attack chain correlation failed: {e}")
+        results["attack_chains"] = []
+        results["correlated_findings"] = []
+
     # --------------------------- Report ---------------------------
     filepath = _generate_pdf(results)
     total_ports = sum(len(h.get("open_ports", [])) for h in results["nmap_hosts"])
@@ -1619,6 +1650,7 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         + len(results.get("lfisuite_findings", []))
         + len(results.get("deep_findings", []))
     )
+    correlated_count = len(results.get("correlated_findings", []))
     spoken = (
         f"Pentest on {domain} complete, sir. "
         f"Found {len(results['subdomains'])} subdomains, "
@@ -1626,7 +1658,8 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         f"{total_ports} open ports, "
         f"{len(results['nikto_findings'])} web findings, "
         f"{len(results['nuclei_findings'])} CVE findings, "
-        f"{exploit_count} exploitation findings. "
+        f"{exploit_count} exploitation findings, "
+        f"{correlated_count} correlated vulnerabilities. "
         f"Full report saved to your desktop."
     )
 

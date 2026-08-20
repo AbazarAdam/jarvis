@@ -29,6 +29,7 @@ config/gmail_token.pickle
 
 # Real memory – do not commit
 memory/long_term.json
+memory/skills/
 
 # Large external binaries
 tools/nuclei/nuclei.exe

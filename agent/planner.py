@@ -23,6 +23,7 @@ ABSOLUTE RULES:
 - Use web_search for ANY information retrieval, research, or current data.
 - Use file_controller to save content to disk.
 - Use cmd_control to open files or run system commands.
+- If no existing tool can solve a step, use skill_runner with action=create to learn a new skill.
 - Max 5 steps. Use the minimum steps needed.
 
 AVAILABLE TOOLS AND THEIR PARAMETERS:
@@ -115,6 +116,12 @@ code_helper
 dev_agent
   description: string (required)
   language: string (optional)
+
+skill_runner
+  action: "create" | "run" | "list" | "status" (required)
+  name: string (skill name, optional)
+  description: string (natural language task description for create)
+  params: object (optional JSON parameters)
 EXAMPLES:
 
 Goal: "research mechanical engineering and save it to a notepad file"
