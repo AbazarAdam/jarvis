@@ -763,12 +763,16 @@ class JarvisLive:
         def wrapper():
             try:
                 result = func(parameters=args, player=self.ui)
-                self.background_tasks[task_id]["status"] = "completed"
-                self.background_tasks[task_id]["result"] = result
+                task = self.background_tasks.get(task_id)
+                if task:
+                    task["status"] = "completed"
+                    task["result"] = result
                 self._announce_local(f"{tool_name} completed, sir.")
             except Exception as e:
-                self.background_tasks[task_id]["status"] = "failed"
-                self.background_tasks[task_id]["result"] = str(e)
+                task = self.background_tasks.get(task_id)
+                if task:
+                    task["status"] = "failed"
+                    task["result"] = str(e)
                 self._announce_local(f"{tool_name} failed, sir.")
                 from core.audit import log_action
                 log_action(tool_name, args, result=str(e), status="failed")
@@ -778,28 +782,24 @@ class JarvisLive:
         return task_id
 
     def cancel_all_background_tasks(self):
-        """Signal all background tasks to stop and clear tracking dicts."""
+        """Signal all background tasks to stop without corrupting active threads."""
         self._stop_background_event.set()
 
-        # Cancel any agent_task queue items
+        # Cancel all agent_task queue items
         try:
             from agent.task_queue import get_queue
             queue = get_queue()
-            # Cancel running + pending tasks if the queue supports it
             if hasattr(queue, "cancel_all"):
                 queue.cancel_all()
-            elif hasattr(queue, "cancel_task"):
-                # Cancel all known task ids if possible
-                for task_id in list(getattr(queue, "_tasks", {}).keys()):
-                    try:
-                        queue.cancel_task(task_id)
-                    except Exception:
-                        pass
         except Exception as e:
             print(f"[JARVIS] ⚠️ Could not cancel task queue: {e}")
 
-        # Clear our own tracking dicts
-        self.background_tasks.clear()
+        # Mark tasks as cancelled but keep entries so wrapper threads can
+        # safely update their status later without raising KeyError.
+        for task in self.background_tasks.values():
+            task["status"] = "cancelled"
+
+        # Threads are daemon; clear only our thread map.
         self._background_threads.clear()
 
     def request_hard_reset(self):
@@ -1131,7 +1131,7 @@ class JarvisLive:
                         if stop_event and stop_event.is_set():
                             # Try to cancel the queued task
                             try:
-                                get_queue().cancel_task(task_id)
+                                get_queue().cancel(task_id)
                             except Exception:
                                 pass
                             return "Cancelled by user."
@@ -1473,6 +1473,7 @@ class JarvisLive:
 
                     self.ui.reset_complete()
                     self._ready_for_text = True
+                    self._stop_background_event.clear()
 
             except HardResetException:
                 print("[JARVIS] Hard reset requested. Reconnecting...")

@@ -111,6 +111,22 @@ class TaskQueue:
             print(f"[TaskQueue] 🚫 Task cancelled: [{task_id}]")
             return True
 
+    def cancel_all(self) -> int:
+        """Cancel all pending/running tasks. Returns number of tasks cancelled."""
+        cancelled = 0
+        with self._lock:
+            for task in list(self._tasks.values()):
+                if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                    task.cancel_flag.set()
+                    task.status = TaskStatus.CANCELLED
+                    cancelled += 1
+
+            # Remove cancelled pending tasks from the internal queue
+            self._queue = [t for t in self._queue if not t.cancel_flag.is_set()]
+
+        print(f"[TaskQueue] 🚫 Cancelled {cancelled} task(s)")
+        return cancelled
+
     def get_status(self, task_id: str) -> dict | None:
         with self._lock:
             task = self._tasks.get(task_id)
