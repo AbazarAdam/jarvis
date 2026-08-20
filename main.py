@@ -19,6 +19,7 @@ import requests
 import sounddevice as sd
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,

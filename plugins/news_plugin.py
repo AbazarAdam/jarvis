@@ -164,16 +164,21 @@ def execute(parameters: dict, player=None, speak=None) -> str:
     if not items:
         return "No fresh news found from the configured feeds, sir."
 
+    # Keep voice output short to avoid Gemini Live deadlines
+    limit = min(limit, 3)
+
     lines = []
     today = datetime.now().strftime("%A, %B %d, %Y")
     lines.append(f"Latest {category} news as of {today}:\n")
 
     for idx, item in enumerate(items[:limit], 1):
         pub = item["published"].strftime("%Y-%m-%d %H:%M UTC") if item["published"] else "unknown date"
-        lines.append(f"{idx}. {item['title']}")
-        lines.append(f"   Source: {item['source']} | {pub}")
-        if item["description"]:
-            lines.append(f"   {item['description']}")
-        lines.append(f"   Link: {item['link']}\n")
+        lines.append(f"{idx}. {item['title']} ({item['source']}, {pub})")
+
+        short_desc = item["description"][:100] if item["description"] else ""
+        if short_desc:
+            lines.append(f"   {short_desc}")
+
+        lines.append("")
 
     return "\n".join(lines)
