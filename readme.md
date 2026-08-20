@@ -88,8 +88,9 @@ flowchart TB
 
 ### 🌐 Browser Automation (Playwright)
 
-* Open any website in your default browser
-* Search Google, Bing, or DuckDuckGo
+* Open any website in a dedicated JARVIS Chrome profile
+* Search DuckDuckGo by default, with Google/Bing support
+* Detect Google CAPTCHA and fall back automatically to DuckDuckGo
 * Manage tabs: new, switch, close, list
 * Scroll by pixel, full page, or to specific elements
 * Fill forms, click elements, extract page text, and reload pages
@@ -131,13 +132,14 @@ JARVIS stores a structured user profile in `memory/long_term.json` and remembers
 
 Unified cybersecurity toolkit including:
 
-* Subdomain enumeration (crt.sh)
-* Email harvesting and breach checking
-* LinkedIn / employee discovery
-* Nmap port scanning with CVE scripts
-* Nikto web vulnerability scanning
-* SSL/TLS certificate analysis
-* Professional PDF reporting
+* Subdomain enumeration via crt.sh, Subfinder, Amass, Sublist3r
+* Live URL probing with httpx, DNS resolution with dnsx, crawling with katana
+* Hidden parameter discovery with Arjun, WAF detection with wafw00f
+* Directory brute-force with Gobuster, ffuf, dirsearch
+* CVE scanning with Nuclei, web scanning with Nikto
+* SQL injection with sqlmap, XSS with dalfox/XSStrike, CMS scans with Droopescan/WPScan
+* SSL/TLS certificate analysis, OSINT dorks, AI tactical insight
+* Professional PDF report with severity classification
 
 ### 📡 Remote Dashboard
 
@@ -148,8 +150,8 @@ Unified cybersecurity toolkit including:
 
 ### ☀️ Morning Brief
 
-* Cybersecurity news
-* AI & software engineering news
+* Real-time cybersecurity news from RSS feeds
+* Real-time AI & software engineering news from RSS feeds
 * Unread email summary
 * Spoken overview + full report saved to Desktop
 
@@ -231,19 +233,24 @@ python main.py
 ### 🛡️ Cybersecurity & Engineering
 
 * [x] Unified cyber recon (OSINT + Nmap + Nikto)
-* [ ] Nuclei / deeper CVE scanning
+* [x] Nuclei / deeper CVE scanning
+* [x] Permission manager
+* [x] Proxy support for security tools
+* [x] Exploitation logic (sqlmap, dalfox/XSStrike, WAF bypass)
+* [x] Severity-classified PDF reports
 * [ ] Encrypted memory store
-* [ ] Permission manager
 * [ ] Social engineering OSINT expansion
 
 ### 🤖 AI & Productivity
 
 * [x] Morning brief
+* [x] Real-time news plugin using RSS
 * [x] Camera vision & streaming
 * [x] Remote voice dashboard
+* [x] Proactive assistance
+* [x] STOP button hard reset + background task cancellation
 * [ ] Wake word “Jarvis”
 * [ ] Conversation context memory
-* [ ] Proactive assistance
 * [ ] Dark / light mode
 
 ### 🔧 Engineering Excellence
@@ -251,8 +258,8 @@ python main.py
 * [x] Unit tests & CI/CD
 * [x] Docker build job
 * [x] Plugin architecture
+* [x] Background task cancellation
 * [ ] Full Dockerized JARVIS
-* [ ] Code coverage service (Codecov)
 * [ ] Linting and type checking
 
 ---
