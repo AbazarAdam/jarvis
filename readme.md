@@ -218,7 +218,6 @@ Install the following external tools:
 ```bash
 git clone https://github.com/sullo/nikto tools/nikto
 ```
-
 ---
 
 ---
@@ -281,6 +280,8 @@ JARVIS/
 ├── docs/
 ├── requirements.txt
 └── Dockerfile
+
+```
 ---
 
 ## 📦 Quick Start
