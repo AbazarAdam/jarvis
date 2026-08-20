@@ -37,7 +37,7 @@ jobs:
       - name: Syntax check core modules
         run: |
           python -m py_compile main.py ui.py server.py
-          python -m py_compile core/*.py agent/*.py plugins/*.py actions/*.py
+          Get-ChildItem core,agent,plugins,actions -Filter *.py | ForEach-Object { python -m py_compile $_.FullName }
 
       - name: Run tests with coverage
         run: |
