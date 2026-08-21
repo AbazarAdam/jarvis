@@ -1094,9 +1094,13 @@ class MainWindow(QMainWindow):
             self._apply_state("LISTENING")
 
     def reset_complete(self):
-        """Re-enable STOP button and mark JARVIS as listening after a reset."""
+        """Re-enable STOP button and restore JARVIS to online/listening."""
         self._interrupt_btn.setEnabled(True)
+        self._muted = False
+        self.hud.muted = False
+        self._style_mute_btn()
         self._apply_state("LISTENING")
+        self._log.append_log("SYS: Microphone active.")
         # "JARVIS online" is already logged by run()
 
     def __init__(self, face_path: str):

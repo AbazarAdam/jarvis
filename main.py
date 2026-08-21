@@ -7,6 +7,8 @@ import traceback
 import importlib.util
 import uuid
 import time
+import psutil
+import os
 from pathlib import Path
 from server import start_server, generate_qr
 from actions.morning_brief import morning_brief
@@ -802,6 +804,85 @@ class JarvisLive:
         # Threads are daemon; clear only our thread map.
         self._background_threads.clear()
 
+
+    def _kill_child_processes(self):
+        """
+        Kill every child process spawned by JARVIS immediately.
+
+        This stops security tools, browsers, sandbox scripts, and other
+        subprocesses that a normal thread-cancellation cannot kill.
+        """
+        try:
+            parent = psutil.Process(os.getpid())
+            children = parent.children(recursive=True)
+
+            for child in children:
+                try:
+                    child.terminate()
+                except Exception:
+                    pass
+
+            # Give processes a short moment to die, then force kill survivors.
+            time.sleep(0.5)
+
+            for child in children:
+                try:
+                    if child.is_running():
+                        child.kill()
+                except Exception:
+                    pass
+
+            print(f"[JARVIS] ⏹ Killed {len(children)} child process(es).")
+        except Exception as e:
+            print(f"[JARVIS] ⚠️ Child process cleanup failed: {e}")
+
+    def _reset_volatile_plugins(self):
+        """Reset in-memory plugin state after a hard reset."""
+        try:
+            import plugins.stopwatch as sw
+            with sw._lock:
+                sw._start_time = None
+                sw._elapsed = 0.0
+        except Exception as e:
+            print(f"[JARVIS] ⚠️ Stopwatch reset failed: {e}")
+
+        try:
+            import actions.browser_control as bc
+            bc._bt._browser = None
+            bc._bt._context = None
+            bc._bt._page = None
+        except Exception:
+            pass
+
+    async def _close_browser_safe(self):
+        """Best-effort browser close after a hard reset.
+
+        This version only closes the browser if its event loop is actually
+        running. It prevents the unawaited-coroutine warning and does not
+        block the hard-reset recovery."""
+        try:
+            import actions.browser_control as bc
+
+            bt = bc._bt
+            loop = getattr(bt, "_loop", None)
+
+            # No browser thread / loop? Nothing to close safely.
+            if loop is None or loop.is_closed():
+                return
+
+            # Schedule _close_browser on the browser thread loop, then wait.
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    bt._close_browser(),
+                    loop,
+                )
+                await asyncio.wrap_future(future)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+
     def request_hard_reset(self):
         """Synchronous wrapper called from the UI thread to schedule hard_reset."""
         if self._loop and not self._loop.is_closed():
@@ -812,21 +893,31 @@ class JarvisLive:
         else:
             print("[JARVIS] Hard reset requested but event loop not ready.")
 
+
     async def hard_reset(self):
-        """Full hard reset: cancel tasks, clear queues, and force session restart."""
+        """Full hard reset: kill all tasks, clear all state, force session restart."""
         print("[JARVIS] ⏹ Hard reset initiated.")
         self.ui.write_log("SYS: Hard reset initiated.")
 
-        # Mark that a hard reset is in progress (used to distinguish from real errors)
+        # Mark that a hard reset is in progress
         self._hard_reset_triggered = True
 
-        # 1. Set event to trigger HardResetException in the receive loop
-        self._hard_reset_event.set()
+        # Stop accepting new text input until JARVIS is back online
+        self._ready_for_text = False
 
-        # 2. Cancel background tasks (cooperative via stop event)
+        # 1. Cancel background tasks and agent queue
         self.cancel_all_background_tasks()
 
-        # 3. Clear audio queues
+        # 2. Kill every child process immediately
+        self._kill_child_processes()
+
+        # 3. Reset volatile plugin state
+        self._reset_volatile_plugins()
+
+        # 4. Close browser if possible
+        await self._close_browser_safe()
+
+        # 5. Clear audio queues
         if getattr(self, "audio_in_queue", None):
             while not self.audio_in_queue.empty():
                 try:
@@ -840,11 +931,25 @@ class JarvisLive:
                 except asyncio.QueueEmpty:
                     break
 
-        # 4. Reset speaking state and update UI
+        # 6. Reset speaking state and update UI
         self.set_speaking(False)
         self.ui.set_state("RESTARTING")
 
+        # 7. Force the session loop to terminate and reconnect
+        self._hard_reset_event.set()
 
+        # Safety fallback: if for any reason the run loop does not set
+        # _ready_for_text=True within 15 seconds, force it back online.
+        def _recovery_guard():
+            time.sleep(15)
+            try:
+                if not self._ready_for_text:
+                    self._ready_for_text = True
+                    self.ui.reset_complete()
+            except Exception:
+                pass
+
+        threading.Thread(target=_recovery_guard, daemon=True).start()
 
 
     def speak_error(self, tool_name: str, error: str):
@@ -1506,6 +1611,15 @@ class JarvisLive:
 
                     self.ui.reset_complete()
                     self._ready_for_text = True
+                    self._stop_background_event.clear()
+                    self._hard_reset_event.clear()
+
+                    # Force JARVIS back to live microphone listening.
+                    # If the UI was muted before STOP, this ensures it is
+                    # unmuted for the new session.
+                    self.ui.muted = False
+                    self.ui.set_state("LISTENING")
+                    self.ui.write_log("SYS: Microphone active.")
                     self._stop_background_event.clear()
 
             except HardResetException:
