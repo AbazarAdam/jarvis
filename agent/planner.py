@@ -122,6 +122,11 @@ skill_runner
   name: string (skill name, optional)
   description: string (natural language task description for create)
   params: object (optional JSON parameters)
+
+codebase_insight
+  action: "index" | "summary" | "search" | "auth" | "routes" (required)
+  project_path: string (optional, default ".")
+  query: string (optional, for search)
 EXAMPLES:
 
 Goal: "research mechanical engineering and save it to a notepad file"

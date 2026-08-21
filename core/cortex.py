@@ -86,6 +86,7 @@ RISK_RULES = {
     "git_plugin": 3,
     "learning_mode": 1,
     "system_management": 3,
+    "codebase_insight": 0,
 }
 
 
@@ -103,6 +104,7 @@ SIDE_EFFECTS = {
     "code_helper": ["filesystem_write", "code_execution"],
     "dev_agent": ["filesystem_write", "code_execution"],
     "agent_task": ["multi_step", "tool_delegation"],
+    "codebase_insight": ["filesystem_read"],
 }
 
 

@@ -366,3 +366,27 @@ def correlate_vulnerabilities(target: str, results: dict) -> dict:
         "attack_chains": chains,
         "correlated_findings": findings,
     }
+
+def execute_attack_chains(chains: list[dict], timeout: int = 20) -> list[dict]:
+    """
+    Execute safe read-only PoC commands from discovered attack chains.
+
+    Returns a list of structured evidence results.
+    """
+    from core.poc_executor import execute_many
+
+    evidence_items = []
+
+    for chain in chains or []:
+        product = chain.get("product", "")
+        version = chain.get("version", "")
+        cve_ids = [cve.get("cve_id", "") for cve in chain.get("cves", [])[:3]]
+
+        for command in chain.get("poc_commands", []):
+            result = execute_many([command], timeout=timeout)[0]
+            result["product"] = product
+            result["version"] = version
+            result["cve_ids"] = cve_ids
+            evidence_items.append(result)
+
+    return evidence_items

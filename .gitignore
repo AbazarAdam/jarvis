@@ -46,3 +46,5 @@ tools/amass/
 tools/trufflehog/
 tools/whatweb/
 chrome_profile/
+.coverage
+memory/codebase_index.json

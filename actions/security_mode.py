@@ -1395,7 +1395,19 @@ def _generate_pdf(results: dict) -> Path:
             severity_lines.append(f"--- {sev.upper()} ---")
             severity_lines.extend(items[:15])
             severity_lines.append("")  # blank line separator
-    _write_pdf_section(pdf, "[33] FINDINGS BY SEVERITY", severity_lines, max_items=100)
+    _write_pdf_section(pdf, "[32] FINDINGS BY SEVERITY", severity_lines, max_items=100)
+    pdf.ln(3)
+
+    # Real read-only PoC execution results
+    evidence_lines = []
+    for ev in results.get("attack_evidence", []):
+        line = (
+            f"{ev.get('product', 'unknown')} "
+            f"{ev.get('version', '')} | {ev.get('command', '')} | "
+            f"safe={ev.get('safe')} | evidence={ev.get('evidence', '')}"
+        )
+        evidence_lines.append(line)
+    _write_pdf_section(pdf, "[34] ATTACK EVIDENCE", evidence_lines, max_items=80)
     pdf.ln(3)
 
     # Executive summary (renumbered)
@@ -1412,7 +1424,7 @@ def _generate_pdf(results: dict) -> Path:
         f"Info findings: {len(severity_data.get('info', []))}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
     ]
-    _write_pdf_section(pdf, "[33] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[35] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
@@ -1635,14 +1647,16 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
 
     # --------------------------- Attack chain correlation ---------------------------
     try:
-        from actions.attack_chain import correlate_vulnerabilities
+        from actions.attack_chain import correlate_vulnerabilities, execute_attack_chains
         attack_results = correlate_vulnerabilities(domain, results)
         results["attack_chains"] = attack_results.get("attack_chains", [])
         results["correlated_findings"] = attack_results.get("correlated_findings", [])
+        results["attack_evidence"] = execute_attack_chains(results.get("attack_chains", []))
     except Exception as e:
         print(f"[SecurityMode] ⚠️ Attack chain correlation failed: {e}")
         results["attack_chains"] = []
         results["correlated_findings"] = []
+        results["attack_evidence"] = []
 
     # --------------------------- Report ---------------------------
     filepath = _generate_pdf(results)
@@ -1655,6 +1669,7 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         + len(results.get("deep_findings", []))
     )
     correlated_count = len(results.get("correlated_findings", []))
+    evidence_count = len(results.get("attack_evidence", []))
     spoken = (
         f"Pentest on {domain} complete, sir. "
         f"Found {len(results['subdomains'])} subdomains, "
@@ -1663,7 +1678,8 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         f"{len(results['nikto_findings'])} web findings, "
         f"{len(results['nuclei_findings'])} CVE findings, "
         f"{exploit_count} exploitation findings, "
-        f"{correlated_count} correlated vulnerabilities. "
+        f"{correlated_count} correlated vulnerabilities, "
+        f"{evidence_count} attack evidence results. "
         f"Full report saved to your desktop."
     )
 
