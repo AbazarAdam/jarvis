@@ -40,28 +40,26 @@ BASE_DIR   = _base_dir()
 CONFIG_DIR = BASE_DIR / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
 
-_DEFAULT_W, _DEFAULT_H = 1100, 760
-_MIN_W,     _MIN_H     = 940, 640
-_LEFT_W  = 180
-_RIGHT_W = 380
+_DEFAULT_W, _DEFAULT_H = 1000, 630
+_MIN_W,     _MIN_H     = 960, 600
+_LEFT_W  = 200
+_RIGHT_W = 360
+_BOTTOM_H = 56
 
 _OS = platform.system()
 
-# ---------------------------------------------------------------------------
-# NEW LUXURY COLOR SYSTEM
-# ---------------------------------------------------------------------------
 class C:
-    BG        = "#05070D"   # deep graphite navy
-    PANEL     = "#0A101C"   # glass base
+    BG        = "#05070D"
+    PANEL     = "#0A101C"
     PANEL2    = "#0D1524"
     BORDER    = "#1E2A3A"
     BORDER_B  = "#2A3A4F"
     BORDER_A  = "#1A2E3F"
-    PRI       = "#00D4FF"   # soft cyan
+    PRI       = "#00D4FF"
     PRI_DIM   = "#007A99"
     PRI_GHO   = "#001F2E"
-    ACC       = "#D4AF37"   # champagne gold
-    ACC2      = "#FFB454"   # warm amber
+    ACC       = "#D4AF37"
+    ACC2      = "#FFB454"
     GREEN     = "#00E6A0"
     GREEN_D   = "#00AA66"
     RED       = "#FF4D6A"
@@ -85,7 +83,7 @@ def _add_shadow(widget, radius=24, alpha=80, offset=(0, 8)):
     widget.setGraphicsEffect(effect)
 
 class _SysMetrics:
-    # Same logic as before, kept unchanged for reliability
+    # Same as previous version, unchanged for reliability
     def __init__(self):
         self.cpu  = 0.0
         self.mem  = 0.0
@@ -192,7 +190,7 @@ class HudCanvas(QWidget):
     def __init__(self, face_path: str, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
-        self.setMinimumSize(320, 320)
+        self.setMinimumSize(360, 360)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.muted    = False
@@ -246,14 +244,12 @@ class HudCanvas(QWidget):
         cx, cy = W / 2, H / 2
         fw = min(W, H)
 
-        # Background gradient (deep graphite/navy)
         grad = QLinearGradient(0, 0, W, H)
         grad.setColorAt(0.0, qcol("#05070D"))
         grad.setColorAt(0.5, qcol("#0A101C"))
         grad.setColorAt(1.0, qcol("#05070D"))
         p.fillRect(self.rect(), QBrush(grad))
 
-        # Central radial glow
         glow_radius = fw * 0.45
         g = QRadialGradient(QPointF(cx, cy), glow_radius)
         g.setColorAt(0.0, qcol("#003344", 90))
@@ -262,7 +258,6 @@ class HudCanvas(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QRectF(cx - glow_radius, cy - glow_radius, glow_radius * 2, glow_radius * 2))
 
-        # Rotating rings (calm, thin)
         ring_fractions = [0.48, 0.41, 0.34, 0.27]
         for i, frac in enumerate(ring_fractions):
             radius = fw * frac
@@ -279,7 +274,6 @@ class HudCanvas(QWidget):
                 p.drawArc(rect, int(angle * 16), int(arc_len * 16))
                 angle += arc_len + gap
 
-        # Central AI core (glassy)
         core_radius = fw * 0.31
         for i in range(10, 0, -1):
             r = core_radius * i / 10
@@ -292,13 +286,11 @@ class HudCanvas(QWidget):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
 
-        # Inner dark glass circle
         p.setBrush(QBrush(qcol("#0A101C", 220)))
         p.setPen(QPen(qcol(C.BORDER_B, 200), 2))
         p.drawEllipse(QRectF(cx - core_radius * 0.82, cy - core_radius * 0.82,
                              core_radius * 1.64, core_radius * 1.64))
 
-        # Waveform inside core
         waveform_y = cy
         N = 37
         spacing = fw * 0.014
@@ -318,10 +310,8 @@ class HudCanvas(QWidget):
             p.drawLine(QPointF(x, waveform_y - height / 2),
                        QPointF(x, waveform_y + height / 2))
 
-        # Status text at bottom, modern sans font
         status_y = cy + fw * 0.42
-        font = QFont("Segoe UI", 12, QFont.Weight.DemiBold)
-        p.setFont(font)
+        p.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         if self.muted:
             txt, col = "MUTED", qcol(C.MUTED_C)
         elif self.speaking:
@@ -361,12 +351,10 @@ class CircularGauge(QWidget):
         cx, cy = W / 2, H / 2
         radius = min(W, H) * 0.40
 
-        # Soft background
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(qcol(C.BAR_BG, 200)))
         p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
 
-        # Border
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(qcol(C.BORDER_A), 1.5))
         p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
@@ -410,7 +398,6 @@ class MetricBar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
 
-        # Glass panel background
         p.setBrush(QBrush(qcol(C.PANEL2, 210)))
         p.setPen(QPen(qcol(C.BORDER), 1))
         p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 6, 6)
@@ -437,7 +424,6 @@ class MetricBar(QWidget):
         p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(0, 4, W - 8, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
-
 
 
 class LogWidget(QTextEdit):
@@ -920,26 +906,13 @@ class MainWindow(QMainWindow):
         self._cam_preview.setWindowFlags(Qt.WindowType.ToolTip)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(12)
+
         root.addWidget(self._build_header())
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
-        self._left_panel = self._build_left_panel()
-        body.addWidget(self._left_panel, stretch=0)
-
-        self.hud = HudCanvas(face_path)
-        self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        body.addWidget(self.hud, stretch=5)
-
-        self._right_panel = self._build_right_panel()
-        body.addWidget(self._right_panel, stretch=0)
-
-        root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        root.addLayout(self._build_body(), stretch=1)
+        root.addWidget(self._build_bottom_bar())
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
@@ -966,7 +939,225 @@ class MainWindow(QMainWindow):
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
 
-    # --- Toggle helpers ---
+    # ------------------------------------------------------------------
+    # LAYOUT BUILDERS
+    # ------------------------------------------------------------------
+    def _build_header(self):
+        w = QWidget()
+        w.setFixedHeight(44)
+        w.setStyleSheet("background: transparent; border: none;")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # Centered title + subtitle
+        title = QLabel("J.A.R.V.I.S")
+        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        sub = QLabel("Just A Rather Very Intelligent System")
+        sub.setFont(QFont("Segoe UI", 8))
+        sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        title_col.addWidget(title)
+        title_col.addWidget(sub)
+
+        lay.addStretch(1)
+        lay.addLayout(title_col, 0)
+        lay.addStretch(1)
+
+        # Clock / date on right
+        self._clock_lbl = QLabel("00:00:00")
+        self._clock_lbl.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+
+        self._date_lbl = QLabel("")
+        self._date_lbl.setFont(QFont("Segoe UI", 8))
+        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+
+        clock_col = QVBoxLayout()
+        clock_col.setSpacing(0)
+        clock_col.addWidget(self._clock_lbl, alignment=Qt.AlignmentFlag.AlignRight)
+        clock_col.addWidget(self._date_lbl, alignment=Qt.AlignmentFlag.AlignRight)
+
+        lay.addLayout(clock_col, 0)
+        return w
+
+    def _build_body(self):
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
+
+        self._left_panel = self._build_left_panel()
+        body.addWidget(self._left_panel, 0)
+
+        self.hud = HudCanvas("face.png")
+        self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        body.addWidget(self.hud, 1)
+
+        self._right_panel = self._build_right_panel()
+        body.addWidget(self._right_panel, 0)
+
+        return body
+
+    def _build_left_panel(self):
+        w = QWidget()
+        w.setFixedWidth(_LEFT_W)
+        w.setStyleSheet(f"background: rgba(10, 16, 28, 0.65); border: 1px solid {C.BORDER}; border-radius: 16px;")
+        _add_shadow(w, radius=24, alpha=60, offset=(0, 6))
+
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        hdr = QLabel("SYSTEM VITALS")
+        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+
+        lay.addWidget(hdr)
+
+        self._bar_cpu = MetricBar("CPU", C.PRI)
+        self._bar_mem = MetricBar("MEM", C.ACC2)
+        self._bar_net = MetricBar("NET", C.GREEN)
+        self._bar_gpu = MetricBar("GPU", C.ACC)
+        self._bar_tmp = MetricBar("TMP", "#FF6688")
+
+        for bar in [self._bar_cpu, self._bar_mem, self._bar_net, self._bar_gpu, self._bar_tmp]:
+            lay.addWidget(bar)
+
+        info_panel = QWidget()
+        info_panel.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 8px;")
+        ip_lay = QVBoxLayout(info_panel); ip_lay.setContentsMargins(8, 6, 8, 6); ip_lay.setSpacing(2)
+        self._uptime_lbl = QLabel("UP --:--")
+        self._uptime_lbl.setFont(QFont("Segoe UI", 8)); self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
+        self._proc_lbl = QLabel("PROC --")
+        self._proc_lbl.setFont(QFont("Segoe UI", 8)); self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
+        os_lbl = QLabel(f"OS {os_name}")
+        os_lbl.setFont(QFont("Segoe UI", 8)); os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        ip_lay.addWidget(self._uptime_lbl); ip_lay.addWidget(self._proc_lbl); ip_lay.addWidget(os_lbl)
+        lay.addWidget(info_panel)
+        lay.addStretch()
+
+        self._remote_btn = QPushButton("REMOTE ACCESS")
+        self._remote_btn.setFixedHeight(32)
+        self._remote_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        self._remote_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remote_btn.clicked.connect(self._toggle_remote_access)
+        self._update_remote_btn()
+        lay.addWidget(self._remote_btn)
+
+        self._proactive_enabled = False
+        self._proactive_btn = QPushButton("PROACTIVE: OFF")
+        self._proactive_btn.setFixedHeight(32)
+        self._proactive_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        self._proactive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._proactive_btn.clicked.connect(self._toggle_proactive)
+        self._style_proactive_btn()
+        lay.addWidget(self._proactive_btn)
+
+        return w
+
+    def _build_right_panel(self):
+        w = QWidget()
+        w.setFixedWidth(_RIGHT_W)
+        w.setStyleSheet(f"background: rgba(10, 16, 28, 0.65); border: 1px solid {C.BORDER}; border-radius: 16px;")
+        _add_shadow(w, radius=24, alpha=60, offset=(0, 6))
+
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        hdr = QLabel("ACTIVITY LOG")
+        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(hdr)
+
+        self._log = LogWidget()
+        lay.addWidget(self._log, 1)
+
+        self._drop_zone = FileDropZone()
+        self._drop_zone.file_selected.connect(self._on_file_selected)
+        lay.addWidget(self._drop_zone)
+
+        self._file_hint = QLabel("No file loaded")
+        self._file_hint.setFont(QFont("Segoe UI", 8))
+        self._file_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._file_hint.setWordWrap(True)
+        lay.addWidget(self._file_hint)
+
+        return w
+
+    def _build_bottom_bar(self):
+        w = QWidget()
+        w.setFixedHeight(_BOTTOM_H)
+        w.setStyleSheet(f"background: rgba(10, 16, 28, 0.72); border: 1px solid {C.BORDER}; border-radius: 16px;")
+        _add_shadow(w, radius=28, alpha=70, offset=(0, 6))
+
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(16, 8, 16, 8)
+        lay.setSpacing(10)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Type a command or question…")
+        self._input.setFont(QFont("Segoe UI", 9))
+        self._input.setStyleSheet(f"""
+            QLineEdit {{ background: #0A101C; color: {C.WHITE}; border: 1px solid {C.BORDER}; border-radius: 6px; padding: 5px 10px; }}
+            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+        """)
+        self._input.returnPressed.connect(self._send)
+        lay.addWidget(self._input, 1)
+
+        send = QPushButton("▸")
+        send.setFixedSize(34, 34)
+        send.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        send.setCursor(Qt.CursorShape.PointingHandCursor)
+        send.setStyleSheet(f"""
+            QPushButton {{ background: {C.PANEL2}; color: {C.PRI}; border: 1px solid {C.PRI_DIM}; border-radius: 6px; }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        """)
+        send.clicked.connect(self._send)
+        lay.addWidget(send)
+
+        self._mute_btn = QPushButton("🎙")
+        self._mute_btn.setFixedSize(34, 34)
+        self._mute_btn.setFont(QFont("Segoe UI", 12))
+        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mute_btn.clicked.connect(self._toggle_mute)
+        self._style_mute_btn()
+        lay.addWidget(self._mute_btn)
+
+        fs_btn = QPushButton("⛶")
+        fs_btn.setFixedSize(34, 34)
+        fs_btn.setFont(QFont("Segoe UI", 12))
+        fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        fs_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 6px; }}
+            QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.BORDER_B}; }}
+        """)
+        fs_btn.clicked.connect(self._toggle_fullscreen)
+        lay.addWidget(fs_btn)
+
+        self._interrupt_btn = QPushButton("⏹")
+        self._interrupt_btn.setFixedSize(34, 34)
+        self._interrupt_btn.setFont(QFont("Segoe UI", 12))
+        self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._interrupt_btn.setStyleSheet(f"""
+            QPushButton {{ background: #140006; color: {C.RED}; border: 1px solid {C.RED}; border-radius: 6px; }}
+            QPushButton:hover {{ background: #1f000a; }}
+        """)
+        self._interrupt_btn.clicked.connect(self._toggle_interrupt)
+        lay.addWidget(self._interrupt_btn)
+
+        return w
+
+
+    # ------------------------------------------------------------------
+    # TOGGLE AND UI STATE
+    # ------------------------------------------------------------------
     def _toggle_remote_access(self):
         if self._remote_active:
             from server import stop_ngrok
@@ -1064,7 +1255,7 @@ class MainWindow(QMainWindow):
         if net < 1.0: net_str = f"{net*1024:.0f}KB/s"
         else: net_str = f"{net:.1f}MB/s"
         self._bar_net.set_value(min(100, net*10), net_str)
-        self._bar_gpu.set_value(snap["gpu"] if snap["gpu"] >= 0 else 0, f"{snap['gpu']:.0f}%" if snap["gpu"]>=0 else "N/A")
+        self._bar_gpu.set_value(snap["gpu"] if snap["gpu"]>=0 else 0, f"{snap['gpu']:.0f}%" if snap["gpu"]>=0 else "N/A")
         self._bar_tmp.set_value(min(100, snap["tmp"]) if snap["tmp"]>=0 else 0, f"{snap['tmp']:.0f}°C" if snap["tmp"]>=0 else "N/A")
         try:
             boot_t = psutil.boot_time(); elapsed = time.time()-boot_t
@@ -1074,219 +1265,9 @@ class MainWindow(QMainWindow):
         try: self._proc_lbl.setText(f"PROC {len(psutil.pids())}")
         except: self._proc_lbl.setText("PROC --")
 
-    def _build_header(self):
-        w = QWidget()
-        w.setFixedHeight(64)
-        w.setStyleSheet(f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER_B};")
-        lay = QHBoxLayout(w); lay.setContentsMargins(20, 0, 20, 0)
-
-        left = QLabel("J.A.R.V.I.S")
-        left.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
-        left.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        lay.addWidget(left)
-        lay.addStretch()
-
-        mid = QVBoxLayout(); mid.setSpacing(0)
-        title = QLabel("J.A.R.V.I.S")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
-        sub = QLabel("Just A Rather Very Intelligent System")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setFont(QFont("Segoe UI", 8))
-        sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        mid.addWidget(title); mid.addWidget(sub)
-        lay.addLayout(mid)
-        lay.addStretch()
-
-        right_col = QVBoxLayout(); right_col.setSpacing(2)
-        self._clock_lbl = QLabel("00:00:00")
-        self._clock_lbl.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
-        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._date_lbl = QLabel("")
-        self._date_lbl.setFont(QFont("Segoe UI", 7))
-        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        right_col.addWidget(self._clock_lbl); right_col.addWidget(self._date_lbl)
-        lay.addLayout(right_col)
-        return w
-
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
-
-    def _build_left_panel(self):
-        w = QWidget()
-        w.setFixedWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
-        lay = QVBoxLayout(w); lay.setContentsMargins(10, 12, 10, 12); lay.setSpacing(8)
-
-        hdr = QLabel("SYSTEM VITALS")
-        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
-        lay.addWidget(hdr)
-
-        self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
-        self._bar_net = MetricBar("NET", C.GREEN)
-        self._bar_gpu = MetricBar("GPU", C.ACC)
-        self._bar_tmp = MetricBar("TMP", "#FF6688")
-
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net, self._bar_gpu, self._bar_tmp]:
-            lay.addWidget(bar)
-
-        info_panel = QWidget()
-        info_panel.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 6px;")
-        ip_lay = QVBoxLayout(info_panel); ip_lay.setContentsMargins(8, 6, 8, 6); ip_lay.setSpacing(2)
-        self._uptime_lbl = QLabel("UP --:--"); self._uptime_lbl.setFont(QFont("Segoe UI", 8)); self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
-        self._proc_lbl = QLabel("PROC --"); self._proc_lbl.setFont(QFont("Segoe UI", 8)); self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-        os_name = {"Windows":"WIN","Darwin":"macOS","Linux":"LINUX"}.get(_OS,_OS.upper())
-        os_lbl = QLabel(f"OS {os_name}"); os_lbl.setFont(QFont("Segoe UI", 8)); os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
-        ip_lay.addWidget(self._uptime_lbl); ip_lay.addWidget(self._proc_lbl); ip_lay.addWidget(os_lbl)
-        lay.addWidget(info_panel)
-        lay.addStretch()
-
-        self._remote_btn = QPushButton("REMOTE ACCESS")
-        self._remote_btn.setFixedHeight(32)
-        self._remote_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        self._remote_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._remote_btn.clicked.connect(self._toggle_remote_access)
-        self._update_remote_btn()
-        lay.addWidget(self._remote_btn)
-
-        self._proactive_enabled = False
-        self._proactive_btn = QPushButton("PROACTIVE: OFF")
-        self._proactive_btn.setFixedHeight(32)
-        self._proactive_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        self._proactive_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._proactive_btn.clicked.connect(self._toggle_proactive)
-        self._style_proactive_btn()
-        lay.addWidget(self._proactive_btn)
-
-        for txt, col in [("AI CORE\nACTIVE", C.GREEN), ("SEC\nCLEARED", C.PRI), ("PROTOCOL\nXXXVIII", C.TEXT_DIM)]:
-            lbl = QLabel(txt)
-            lbl.setFont(QFont("Segoe UI", 7, QFont.Weight.DemiBold))
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"color: {col}; background: {C.PANEL2}; border: 1px solid {C.BORDER_A}; border-radius: 4px; padding: 4px;")
-            lay.addWidget(lbl)
-
-        return w
-
-    def _build_right_panel(self):
-        w = QWidget()
-        w.setFixedWidth(_RIGHT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-left: 1px solid {C.BORDER};")
-        lay = QVBoxLayout(w); lay.setContentsMargins(10, 10, 10, 10); lay.setSpacing(8)
-
-        def _sec(txt):
-            l = QLabel(txt)
-            l.setFont(QFont("Segoe UI", 7, QFont.Weight.DemiBold))
-            l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-            return l
-
-        lay.addWidget(_sec("ACTIVITY LOG"))
-        self._log = LogWidget()
-        lay.addWidget(self._log, stretch=1)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine); sep.setStyleSheet(f"color: {C.BORDER};")
-        lay.addWidget(sep)
-
-        lay.addWidget(_sec("FILE UPLOAD"))
-        self._drop_zone = FileDropZone()
-        self._drop_zone.file_selected.connect(self._on_file_selected)
-        lay.addWidget(self._drop_zone)
-
-        self._file_hint = QLabel("No file loaded")
-        self._file_hint.setFont(QFont("Segoe UI", 8))
-        self._file_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        self._file_hint.setWordWrap(True)
-        lay.addWidget(self._file_hint)
-
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine); sep2.setStyleSheet(f"color: {C.BORDER};")
-        lay.addWidget(sep2)
-
-        lay.addWidget(_sec("COMMAND INPUT"))
-        lay.addLayout(self._build_input_row())
-
-        self._mute_btn = QPushButton("MICROPHONE ACTIVE")
-        self._mute_btn.setFixedHeight(32)
-        self._mute_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._mute_btn.clicked.connect(self._toggle_mute)
-        self._style_mute_btn()
-        lay.addWidget(self._mute_btn)
-
-        fs_btn = QPushButton("FULLSCREEN  [F11]")
-        fs_btn.setFixedHeight(28)
-        fs_btn.setFont(QFont("Segoe UI", 8))
-        fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        fs_btn.setStyleSheet(f"""
-            QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 6px; }}
-            QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.BORDER_B}; }}
-        """)
-        fs_btn.clicked.connect(self._toggle_fullscreen)
-        lay.addWidget(fs_btn)
-
-        self._interrupt_btn = QPushButton("STOP")
-        self._interrupt_btn.setFixedHeight(32)
-        self._interrupt_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._interrupt_btn.setStyleSheet(f"""
-            QPushButton {{ background: #140006; color: {C.RED}; border: 1px solid {C.RED}; border-radius: 6px; }}
-            QPushButton:hover {{ background: #1f000a; }}
-        """)
-        self._interrupt_btn.clicked.connect(self._toggle_interrupt)
-        lay.addWidget(self._interrupt_btn)
-        return w
-
-
-    def _build_input_row(self):
-        row = QHBoxLayout(); row.setSpacing(6)
-        self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
-        self._input.setFont(QFont("Segoe UI", 9))
-        self._input.setFixedHeight(34)
-        self._input.setStyleSheet(f"""
-            QLineEdit {{ background: #0A101C; color: {C.WHITE}; border: 1px solid {C.BORDER}; border-radius: 6px; padding: 5px 10px; }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
-        """)
-        self._input.returnPressed.connect(self._send)
-        row.addWidget(self._input)
-
-        send = QPushButton("▸")
-        send.setFixedSize(34, 34)
-        send.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        send.setCursor(Qt.CursorShape.PointingHandCursor)
-        send.setStyleSheet(f"""
-            QPushButton {{ background: {C.PANEL2}; color: {C.PRI}; border: 1px solid {C.PRI_DIM}; border-radius: 6px; }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
-        """)
-        send.clicked.connect(self._send)
-        row.addWidget(send)
-        return row
-
-    def _build_footer(self):
-        w = QWidget()
-        w.setFixedHeight(24)
-        w.setStyleSheet(f"background: {C.DARK}; border-top: 1px solid {C.BORDER};")
-        lay = QHBoxLayout(w); lay.setContentsMargins(16, 0, 16, 0)
-
-        def _fl(txt, color=C.TEXT_MED):
-            l = QLabel(txt); l.setFont(QFont("Segoe UI", 7)); l.setStyleSheet(f"color: {color}; background: transparent;")
-            return l
-
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
-        lay.addStretch()
-        lay.addWidget(_fl("Abazar Adam  ·  J.A.R.V.I.S – Just A Rather Very Intelligent  ·  CLASSIFIED"))
-        lay.addStretch()
-        self._setup_label = QLabel(""); self._setup_label.setFont(QFont("Segoe UI", 7)); self._setup_label.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
-        self._setup_label.hide()
-        lay.addWidget(self._setup_label)
-        self._setup_progress = QProgressBar(); self._setup_progress.setFixedWidth(140); self._setup_progress.setFixedHeight(12); self._setup_progress.setRange(0,100); self._setup_progress.setValue(0); self._setup_progress.setTextVisible(False); self._setup_progress.hide()
-        lay.addWidget(self._setup_progress)
-        lay.addWidget(_fl("© Made with ❤️", C.PRI_DIM))
-        return w
 
     def _update_setup_progress(self, text: str, percent: int):
         try:
@@ -1317,12 +1298,12 @@ class MainWindow(QMainWindow):
 
     def _style_mute_btn(self):
         if self._muted:
-            self._mute_btn.setText("MICROPHONE MUTED")
+            self._mute_btn.setText("🔇")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{ background: #140006; color: {C.MUTED_C}; border: 1px solid {C.MUTED_C}; border-radius: 6px; }}
             """)
         else:
-            self._mute_btn.setText("MICROPHONE ACTIVE")
+            self._mute_btn.setText("🎙")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{ background: #00140a; color: {C.GREEN}; border: 1px solid {C.GREEN}; border-radius: 6px; }}
                 QPushButton:hover {{ background: #001f10; }}
