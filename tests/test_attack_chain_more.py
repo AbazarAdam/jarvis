@@ -4,7 +4,7 @@ from actions import attack_chain
 def test_correlate_vulnerabilities_with_mocked_nvd(monkeypatch):
     monkeypatch.setattr(
         attack_chain,
-        "_query_nvd_cves",
+        "fetch_nvd_cves",
         lambda keyword, max_results=20: [
             {
                 "cve_id": "CVE-2024-9999",
