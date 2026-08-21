@@ -31,6 +31,37 @@ NVD_TIMEOUT = 15
 MAX_CVES_PER_SERVICE = 5
 
 
+
+def _classify_evidence(result: dict) -> str:
+    """Classify attack evidence as confirmed / probable / not_exploitable."""
+    if not result.get("safe"):
+        return "not_exploitable"
+
+    stdout = (result.get("stdout") or "").lower()
+    evidence = (result.get("evidence") or "").lower()
+    combined = f"{stdout}\n{evidence}"
+
+    strong_markers = [
+        "root:x:0:0",
+        "cve-",
+        "vulnerable",
+        "sql syntax",
+        "syntax error",
+        "reflected",
+        "xss",
+        "directory traversal",
+        "path traversal",
+    ]
+
+    if any(marker in combined for marker in strong_markers):
+        return "confirmed"
+
+    if result.get("returncode") == 0 and evidence:
+        return "probable"
+
+    return "not_exploitable"
+
+
 # ---------------------------------------------------------------------------
 # Service/version extraction
 # ---------------------------------------------------------------------------
@@ -367,11 +398,11 @@ def correlate_vulnerabilities(target: str, results: dict) -> dict:
         "correlated_findings": findings,
     }
 
-def execute_attack_chains(chains: list[dict], timeout: int = 20) -> list[dict]:
+def execute_attack_chains(chains: list[dict], target: str = "", timeout: int = 20) -> list[dict]:
     """
     Execute safe read-only PoC commands from discovered attack chains.
 
-    Returns a list of structured evidence results.
+    If a chain has no PoC commands, a default safe header check is used.
     """
     from core.poc_executor import execute_many
 
@@ -382,11 +413,16 @@ def execute_attack_chains(chains: list[dict], timeout: int = 20) -> list[dict]:
         version = chain.get("version", "")
         cve_ids = [cve.get("cve_id", "") for cve in chain.get("cves", [])[:3]]
 
-        for command in chain.get("poc_commands", []):
+        commands = chain.get("poc_commands") or []
+        if not commands and target:
+            commands = [f"curl -I https://{target}"]
+
+        for command in commands:
             result = execute_many([command], timeout=timeout)[0]
             result["product"] = product
             result["version"] = version
             result["cve_ids"] = cve_ids
+            result["verdict"] = _classify_evidence(result)
             evidence_items.append(result)
 
     return evidence_items

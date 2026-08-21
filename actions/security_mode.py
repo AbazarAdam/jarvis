@@ -55,6 +55,11 @@ _COMMON_EMAILS = [
 #   - update command (list) or None if manual update
 # ---------------------------------------------------------------------------
 TOOL_SPECS = {
+    "nmap": {
+        "executables": ["nmap", "nmap.exe"],
+        "update_cmd": None,
+        "install_hint": "https://nmap.org/download.html",
+    },
     "amass": {
         "executables": ["amass", "amass.exe"],
         "update_cmd": None,
@@ -248,8 +253,31 @@ def _run_command(cmd: list, timeout: int = 300, cwd: str = None) -> dict:
 # ---------------------------------------------------------------------------
 # Tool discovery & update
 # ---------------------------------------------------------------------------
+def _find_ruby_exe() -> str | None:
+    """Return the Ruby executable path, trying PATH and common install dirs."""
+    ruby_exe = shutil.which("ruby")
+    if ruby_exe:
+        return ruby_exe
+
+    for base in [
+        Path("C:/Ruby34-x64/bin/ruby.exe"),
+        Path("C:/Ruby34/bin/ruby.exe"),
+        Path("C:/Ruby33-x64/bin/ruby.exe"),
+        Path("C:/Ruby33/bin/ruby.exe"),
+        Path("C:/Ruby32-x64/bin/ruby.exe"),
+        Path("C:/Ruby32/bin/ruby.exe"),
+        Path("C:/Ruby31-x64/bin/ruby.exe"),
+        Path("C:/Ruby31/bin/ruby.exe"),
+        Path("C:/Ruby30-x64/bin/ruby.exe"),
+        Path("C:/Ruby30/bin/ruby.exe"),
+    ]:
+        if base.exists():
+            return str(base)
+
+    return None
+
 def _find_tool(name: str) -> str | None:
-    """Locate a tool executable in PATH, .venv/Scripts, or tools/ directory."""
+    """Locate a tool executable in PATH, .venv/Scripts, tools/, or Ruby bin dirs."""
     spec = TOOL_SPECS.get(name, {})
     candidates = spec.get("executables", [name])
 
@@ -262,19 +290,58 @@ def _find_tool(name: str) -> str | None:
         if path:
             return path
 
-    # 2. Virtual env Scripts
+    # 2. Ruby gem executables
+    if name in ("wpscan", "whatweb"):
+        ruby_exe = shutil.which("ruby")
+        ruby_bin_dirs = []
+        if ruby_exe:
+            ruby_bin_dirs.append(Path(ruby_exe).parent)
+
+        # Common RubyInstaller paths
+        for base in [
+            Path("C:/Ruby34-x64/bin"),
+            Path("C:/Ruby34/bin"),
+            Path("C:/Ruby33-x64/bin"),
+            Path("C:/Ruby33/bin"),
+            Path("C:/Ruby32-x64/bin"),
+            Path("C:/Ruby32/bin"),
+            Path("C:/Ruby31-x64/bin"),
+            Path("C:/Ruby31/bin"),
+            Path("C:/Ruby30-x64/bin"),
+            Path("C:/Ruby30/bin"),
+        ]:
+            if base.exists() and base not in ruby_bin_dirs:
+                ruby_bin_dirs.append(base)
+
+        for ruby_bin in ruby_bin_dirs:
+            for candidate in candidates:
+                for suffix in ("", ".bat", ".cmd", ".exe", ".rb"):
+                    candidate_path = ruby_bin / (candidate + suffix)
+                    if candidate_path.exists():
+                        return str(candidate_path)
+
+    # 3. Virtual env Scripts
     venv_scripts = BASE_DIR / ".venv" / "Scripts"
     if venv_scripts.exists():
         for exe in candidates:
             for suffix in ("", ".exe", ".py"):
-                candidate = venv_scripts / (exe + suffix)
-                if candidate.exists():
-                    return str(candidate)
+                candidate_path = venv_scripts / (exe + suffix)
+                if candidate_path.exists():
+                    return str(candidate_path)
 
-    # 3. tools/ directory
+    # 4. tools/ directory, avoiding docs/manpages and prefer correct Nikto script
     if TOOLS_DIR.exists():
+        if name == "nikto":
+            preferred = TOOLS_DIR / "nikto" / "program" / "nikto.pl"
+            if preferred.exists():
+                return str(preferred)
+
         for candidate in TOOLS_DIR.rglob("*"):
-            if candidate.is_file() and candidate.stem.lower() == name.lower():
+            if not candidate.is_file():
+                continue
+            if candidate.suffix.lower() in (".1", ".md", ".txt", ".rst"):
+                continue
+            if candidate.stem.lower() == name.lower():
                 return str(candidate)
 
     return None
@@ -461,7 +528,7 @@ def _run_arjun(domain: str) -> list[str]:
     if not tool:
         return []
 
-    cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable", "-oJ"]
+    cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable"]
     r = _run_command(cmd, timeout=600)
 
     raw = r["stdout"] or r["stderr"]
@@ -522,7 +589,17 @@ def _run_whatweb(domain: str) -> list[str]:
     tool = _find_tool("whatweb")
     if not tool:
         return []
-    cmd = [tool, f"https://{domain}"]
+
+    target = f"https://{domain}"
+    ruby_exe = _find_ruby_exe()
+
+    if ruby_exe:
+        cmd = [ruby_exe, tool, target]
+    elif Path(tool).suffix == ".rb":
+        cmd = ["ruby", tool, target]
+    else:
+        cmd = [tool, target]
+
     r = _run_command(cmd, timeout=120)
     return [line.strip() for line in r["stdout"].splitlines() if line.strip()]
 
@@ -865,7 +942,7 @@ def _run_nmap(domain: str) -> dict:
 
     # Full scan first, then fast fallback
     cmd_full = [
-        nmap_exe, "-sV", "-sC", "--script", "vuln,auth",
+        nmap_exe, "-Pn", "-sV", "-sC", "--script", "vuln,auth",
         "-T4", "--host-timeout", "90s", domain,
     ]
     result = _run_command(cmd_full, timeout=180)
@@ -877,7 +954,7 @@ def _run_nmap(domain: str) -> dict:
 
     # Fallback: top ports
     cmd_fast = [
-        nmap_exe, "--top-ports", "100", "-T4",
+        nmap_exe, "-Pn", "--top-ports", "100", "-T4",
         "--host-timeout", "60s", domain,
     ]
     result = _run_command(cmd_fast, timeout=120)
@@ -1192,9 +1269,18 @@ def _classify_findings(results: dict) -> dict:
         else:
             add("info", finding)
 
-    # sqlmap confirmed injections → critical
+    # sqlmap findings — only confirmed injections should be critical
     for finding in results.get("sqlmap_findings", []):
-        add("critical", finding)
+        f = str(finding).lower()
+        if "is vulnerable" in f or "injectable" in f:
+            if "warning" in f or "might" in f or "does not seem" in f:
+                add("low", finding)
+            else:
+                add("critical", finding)
+        elif "warning" in f or "does not seem" in f:
+            add("low", finding)
+        else:
+            add("medium", finding)
 
     # XSS findings
     for finding in results.get("xss_findings", results.get("xsstrike_findings", [])):
@@ -1222,6 +1308,17 @@ def _classify_findings(results: dict) -> dict:
     for finding in results.get("waf_bypass", []):
         add("medium", finding)
 
+    # Attack evidence verdicts
+    for ev in results.get("attack_evidence", []):
+        verdict = str(ev.get("verdict", "")).lower()
+        command = ev.get("command", "")
+        if verdict == "confirmed":
+            add("high", f"Confirmed attack evidence: {command} — {ev.get('evidence', '')}")
+        elif verdict == "probable":
+            add("medium", f"Probable vulnerability: {command} — {ev.get('evidence', '')}")
+        else:
+            add("info", f"Not exploitable: {command}")
+
     # Nikto findings
     for finding in results.get("nikto_findings", []):
         f = str(finding).lower()
@@ -1245,6 +1342,58 @@ def _classify_findings(results: dict) -> dict:
     add("info", f"SSL valid until: {ssl_info.get('expires', 'unknown')}")
 
     return classified
+
+
+def _build_remediation_lines(results: dict) -> list[str]:
+    lines = []
+    seen = set()
+
+    for chain in results.get("attack_chains", []):
+        product = chain.get("product", "unknown")
+        version = chain.get("version") or "unknown"
+        for cve in chain.get("cves", [])[:2]:
+            cve_id = cve.get("cve_id", "")
+            desc = cve.get("description", "")[:120]
+            if not cve_id or cve_id in seen:
+                continue
+            seen.add(cve_id)
+
+            lines.append(f"{cve_id}: {desc}")
+            lines.append(
+                f"  Reproduction: Use the safe PoC commands in Attack Evidence "
+                f"against {product} {version}."
+            )
+            lines.append(
+                f"  Remediation: Update {product} to the latest patched version. "
+                f"Apply the vendor advisory for {cve_id}."
+            )
+            lines.append("")
+
+    if not lines:
+        lines.append("No confirmed CVEs requiring reproduction/remediation.")
+
+    return lines
+
+
+def _build_attack_path_lines(results: dict) -> list[str]:
+    lines = []
+
+    for chain in results.get("attack_chains", []):
+        service = chain.get("service", "unknown")
+        product = chain.get("product", "unknown")
+        version = chain.get("version") or "unknown"
+        cve_ids = [c.get("cve_id", "") for c in chain.get("cves", [])[:3]]
+
+        if cve_ids:
+            lines.append(
+                f"{service} {product} {version} -> "
+                f"{', '.join(cve_ids)} -> potential exploitation"
+            )
+
+    if not lines:
+        lines.append("No attack paths identified.")
+
+    return lines
 
 
 def _generate_pdf(results: dict) -> Path:
@@ -1398,33 +1547,60 @@ def _generate_pdf(results: dict) -> Path:
     _write_pdf_section(pdf, "[32] FINDINGS BY SEVERITY", severity_lines, max_items=100)
     pdf.ln(3)
 
+    # Reproduction & remediation
+    remediation_lines = _build_remediation_lines(results)
+    _write_pdf_section(pdf, "[33] REPRODUCTION & REMEDIATION", remediation_lines, max_items=80)
+    pdf.ln(3)
+
     # Real read-only PoC execution results
     evidence_lines = []
     for ev in results.get("attack_evidence", []):
         line = (
+            f"[{ev.get('verdict', 'unknown').upper()}] "
             f"{ev.get('product', 'unknown')} "
             f"{ev.get('version', '')} | {ev.get('command', '')} | "
-            f"safe={ev.get('safe')} | evidence={ev.get('evidence', '')}"
+            f"evidence={ev.get('evidence', '')}"
         )
         evidence_lines.append(line)
     _write_pdf_section(pdf, "[34] ATTACK EVIDENCE", evidence_lines, max_items=80)
     pdf.ln(3)
 
-    # Executive summary (renumbered)
+    # Attack paths
+    attack_path_lines = _build_attack_path_lines(results)
+    _write_pdf_section(pdf, "[35] ATTACK PATHS", attack_path_lines, max_items=40)
+    pdf.ln(3)
+
+    # Executive summary with business impact
     total_ports = sum(len(h.get("open_ports", [])) for h in results.get("nmap_hosts", []))
+    critical_count = len(severity_data.get("critical", []))
+    high_count = len(severity_data.get("high", []))
+    medium_count = len(severity_data.get("medium", []))
+    low_count = len(severity_data.get("low", []))
+    info_count = len(severity_data.get("info", []))
+
+    if critical_count or high_count:
+        business_impact = "High — immediate remediation recommended."
+    elif medium_count:
+        business_impact = "Medium — scheduled remediation recommended."
+    elif low_count:
+        business_impact = "Low — routine hardening recommended."
+    else:
+        business_impact = "Informational — no immediate action required."
+
     summary_lines = [
         f"Target: {target}",
         f"Subdomains: {len(results.get('subdomains', []))}",
         f"Sensitive paths: {len(results.get('directories', []))}",
         f"Open ports: {total_ports}",
-        f"Critical findings: {len(severity_data.get('critical', []))}",
-        f"High findings: {len(severity_data.get('high', []))}",
-        f"Medium findings: {len(severity_data.get('medium', []))}",
-        f"Low findings: {len(severity_data.get('low', []))}",
-        f"Info findings: {len(severity_data.get('info', []))}",
+        f"Critical findings: {critical_count}",
+        f"High findings: {high_count}",
+        f"Medium findings: {medium_count}",
+        f"Low findings: {low_count}",
+        f"Info findings: {info_count}",
         f"SSL valid until: {ssl_info.get('expires', 'unknown')}",
+        f"Business impact: {business_impact}",
     ]
-    _write_pdf_section(pdf, "[35] EXECUTIVE SUMMARY", summary_lines, max_items=30)
+    _write_pdf_section(pdf, "[36] EXECUTIVE SUMMARY", summary_lines, max_items=30)
 
     pdf.output(str(filepath))
     return filepath
@@ -1578,7 +1754,10 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     ]
     results["nikto_findings"] = _run_nikto(domain)
     results["nuclei_findings"] = _run_nuclei(domain)
-    results["wpscan_findings"] = _run_wpscan(domain)
+    if "wordpress" in " ".join(results.get("technologies", [])).lower():
+        results["wpscan_findings"] = _run_wpscan(domain)
+    else:
+        results["wpscan_findings"] = []
     results["droopescan_findings"] = _run_droopescan(domain)
 
     # --------------------------- Exploit ---------------------------
@@ -1651,7 +1830,10 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         attack_results = correlate_vulnerabilities(domain, results)
         results["attack_chains"] = attack_results.get("attack_chains", [])
         results["correlated_findings"] = attack_results.get("correlated_findings", [])
-        results["attack_evidence"] = execute_attack_chains(results.get("attack_chains", []))
+        results["attack_evidence"] = execute_attack_chains(
+            results.get("attack_chains", []),
+            target=domain,
+        )
     except Exception as e:
         print(f"[SecurityMode] ⚠️ Attack chain correlation failed: {e}")
         results["attack_chains"] = []

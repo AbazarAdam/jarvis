@@ -84,8 +84,8 @@ class ModelRouter:
         self._cooldown_lock = threading.Lock()
 
         self._gemini_model = "gemini-2.5-flash"
-        self._openrouter_model = "nvidia/nemotron-3-super-120b-a12b:free"
-        self._groq_model = "llama-3.1-8b-instant"
+        self._openrouter_model = "nvidia/nemotron-3-nano-30b-a3b:free"
+        self._groq_model = "llama-3.3-70b-versatile"
 
     # ------------------------------------------------------------------
     # Cooldown helpers
@@ -214,7 +214,7 @@ class ModelRouter:
         if not messages:
             return {"success": False, "text": "", "provider": "", "error": "No messages."}
 
-        provider_order = providers or ["openrouter", "groq", "gemini"]
+        provider_order = providers or ["openrouter", "gemini", "groq"]
 
         for provider in provider_order:
             if self._in_cooldown(provider):
