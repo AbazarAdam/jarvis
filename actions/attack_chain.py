@@ -24,6 +24,7 @@ import requests
 
 from core.model_router import ModelRouter
 from core.proxy_manager import get_requests_proxies
+from core.threat_intel import fetch_nvd_cves, fetch_cisa_kev, fetch_github_advisories_by_cve
 
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -151,74 +152,6 @@ def extract_technologies(technology_lines: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # NVD CVE lookup
 # ---------------------------------------------------------------------------
-def _query_nvd_cves(keyword: str, max_results: int = 20) -> list[dict]:
-    """
-    Query the NVD CVE API for CVEs matching a keyword.
-
-    Returns a list of relevant CVE items with:
-        cve_id, description, cvss_score, severity, published_date
-    """
-    if not keyword:
-        return []
-
-    try:
-        params = {
-            "keywordSearch": keyword,
-            "resultsPerPage": max_results,
-        }
-        headers = {"User-Agent": "JARVIS-Agent"}
-        resp = requests.get(
-            NVD_API_URL,
-            params=params,
-            headers=headers,
-            timeout=NVD_TIMEOUT,
-            proxies=get_requests_proxies(),
-        )
-        if resp.status_code != 200:
-            return []
-
-        data = resp.json()
-        vulns = data.get("vulnerabilities", [])
-
-        cve_items = []
-        for vuln in vulns:
-            cve = vuln.get("cve", {})
-            cve_id = cve.get("id", "")
-            descriptions = cve.get("descriptions", [])
-            desc_text = ""
-            for d in descriptions:
-                if d.get("lang") == "en":
-                    desc_text = d.get("value", "")
-                    break
-            if not desc_text:
-                desc_text = descriptions[0].get("value", "") if descriptions else ""
-
-            metrics = cve.get("metrics", {})
-            severity = "UNKNOWN"
-            score = 0.0
-            for metric_key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-                metric_list = metrics.get(metric_key, [])
-                if metric_list:
-                    base_metric = metric_list[0].get("cvssData", {})
-                    severity = base_metric.get("baseSeverity", "UNKNOWN")
-                    score = base_metric.get("baseScore", 0.0)
-                    break
-
-            published = cve.get("published", "")
-
-            cve_items.append({
-                "cve_id": cve_id,
-                "description": desc_text[:400],
-                "cvss_score": score,
-                "severity": severity,
-                "published_date": published,
-            })
-
-        return cve_items
-
-    except Exception as e:
-        print(f"[AttackChain] ⚠️ NVD query failed for '{keyword}': {e}")
-        return []
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +272,7 @@ def correlate_vulnerabilities(target: str, results: dict) -> dict:
         # Build NVD keyword
         keyword = f"{product} {version}" if version else product
 
-        cves = _query_nvd_cves(keyword, max_results=15)
+        cves = fetch_nvd_cves(keyword, max_results=15)
 
         # Filter to top relevant CVEs
         current_year = datetime.now().year
@@ -393,9 +326,24 @@ def correlate_vulnerabilities(target: str, results: dict) -> dict:
             for cve in relevant_cves[:3]
         )
 
+    # Cross-reference with CISA KEV for known exploited vulnerabilities
+    cisa_kev = fetch_cisa_kev(max_results=100)
+    kev_by_cve = {item.get("cve_id"): item for item in cisa_kev if item.get("cve_id")}
+
+    for chain in chains:
+        for cve in chain.get("cves", []):
+            cve_id = cve.get("cve_id")
+            kev_entry = kev_by_cve.get(cve_id)
+            if kev_entry:
+                findings.append(
+                    f"CISA KEV: {cve_id} — {kev_entry.get('vulnerability_name')} "
+                    f"(Added: {kev_entry.get('date_added')})"
+                )
+
     return {
         "attack_chains": chains,
         "correlated_findings": findings,
+        "cisa_kev": cisa_kev,
     }
 
 def execute_attack_chains(chains: list[dict], target: str = "", timeout: int = 20) -> list[dict]:

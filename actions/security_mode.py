@@ -23,6 +23,7 @@ import requests
 
 from core.audit import log_action
 from core.proxy_manager import get_requests_proxies, get_tool_proxy_arg, get_tool_env, log_proxy_status
+from core.recon_advanced import check_subdomain_takeover, check_cloud_assets
 
 
 # ---------------------------------------------------------------------------
@@ -531,43 +532,64 @@ def _run_arjun(domain: str) -> list[str]:
     cmd = [sys.executable, tool, "-u", f"https://{domain}", "--stable"]
     r = _run_command(cmd, timeout=600)
 
-    raw = r["stdout"] or r["stderr"]
+    raw = (r["stdout"] or r["stderr"]).strip()
     urls = []
 
-    # Try JSON output first
+    # Try to parse JSON if present
     try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            for entry in data:
-                if isinstance(entry, dict):
-                    url = entry.get("url")
-                    params = entry.get("params", [])
-                    if url and params:
-                        for p in params:
-                            urls.append(f"{url}?{p}=FUZZ")
-                    elif url:
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            data = json.loads(raw[start:end])
+            if isinstance(data, dict):
+                url = data.get("url")
+                params = data.get("params", [])
+                if url:
+                    for p in params:
+                        urls.append(f"{url}?{p}=FUZZ")
+                    if not params:
                         urls.append(url)
-        elif isinstance(data, dict):
-            url = data.get("url")
-            params = data.get("params", [])
-            if url:
-                for p in params:
-                    urls.append(f"{url}?{p}=FUZZ")
-                if not params:
-                    urls.append(url)
     except Exception:
-        # Fallback: parse plain lines for URL-like strings
+        pass
+
+    # If no JSON parsed, scan for any URL-like strings
+    if not urls:
         for line in raw.splitlines():
             line = line.strip()
             if line.startswith(("http://", "https://")):
                 urls.append(line)
 
-    # Deduplicate and limit
+    # Deduplicate and limit to 20
     unique = []
     for u in urls:
         if u not in unique:
             unique.append(u)
     return unique[:20]
+
+
+def _build_parameter_test_urls(hidden_params: list[str]) -> list[str]:
+    """
+    Convert Arjun-style parameter URLs into concrete testable URLs.
+
+    Example:
+        "https://target/page?param=FUZZ" -> "https://target/page?param=1"
+    """
+    test_urls = []
+
+    for hp in hidden_params or []:
+        if "FUZZ" in hp:
+            for value in ("1", "test", "a"):
+                test_urls.append(hp.replace("FUZZ", value))
+        else:
+            test_urls.append(hp)
+
+    # Deduplicate and limit
+    unique = []
+    for u in test_urls:
+        if u not in unique:
+            unique.append(u)
+    return unique[:10]
+
 
 def _run_dalfox(domain: str) -> list[str]:
     tool = _find_tool("dalfox")
@@ -1055,6 +1077,62 @@ def _run_nuclei(domain: str) -> list[str]:
     return findings
 
 
+def _run_nuclei_evidence(domain: str) -> list[dict]:
+    """
+    Run Nuclei exploit/vulnerability templates and return structured evidence
+    suitable for the attack_evidence PDF section.
+    """
+    nuclei_exe = _find_tool("nuclei")
+    if not nuclei_exe:
+        return []
+
+    target = f"https://{domain}"
+    cmd = [
+        nuclei_exe,
+        "-u", target,
+        "-severity", "critical,high,medium",
+        "-tags", "cve,misconfig,exposure,rce,sqli,xss,lfi,ssrf,panel,default-login",
+        "-silent",
+        "-jsonl",
+        "-no-color",
+    ]
+
+    result = _run_command(cmd, timeout=900)
+
+    evidence_items = []
+
+    for line in result["stdout"].splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+
+        info = data.get("info", {})
+        name = info.get("name", "Unknown")
+        severity = info.get("severity", "unknown")
+        matched = data.get("matched-at", target)
+
+        evidence_items.append({
+            "command": f"nuclei -u {target} -tags cve,misconfig,exposure,rce,sqli,xss,lfi,ssrf",
+            "safe": True,
+            "reason": "",
+            "returncode": 0,
+            "stdout": line[:500],
+            "stderr": "",
+            "evidence": f"{severity.upper()}: {name}",
+            "duration": 0,
+            "product": "nuclei",
+            "version": "",
+            "cve_ids": [],
+            "verdict": "confirmed" if severity in ("critical", "high") else "probable",
+        })
+
+    return evidence_items
+
+
 def _run_wpscan(domain: str) -> list[str]:
     """Run WPScan if WordPress is detected or tool exists."""
     wpscan_exe = _find_tool("wpscan")
@@ -1534,6 +1612,14 @@ def _generate_pdf(results: dict) -> Path:
     # Attack chain correlation
     _write_pdf_section(pdf, "[31] ATTACK CHAINS / CVE CORRELATION", results.get("correlated_findings", []), max_items=60)
     pdf.ln(3)
+    _write_pdf_section(pdf, "[31A] CISA KEV MATCHES", results.get("cisa_kev", []), max_items=30)
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[31B] GITHUB SECURITY ADVISORIES", results.get("github_advisories", []), max_items=30)
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[31C] SUBDOMAIN TAKEOVER CHECKS", results.get("subdomain_takeover", []), max_items=40)
+    pdf.ln(3)
+    _write_pdf_section(pdf, "[31D] CLOUD ASSET DISCOVERY", results.get("cloud_assets", []), max_items=40)
+    pdf.ln(3)
 
     # Severity classification
     severity_data = _classify_findings(results)
@@ -1610,22 +1696,42 @@ def _generate_pdf(results: dict) -> Path:
 # Main Dispatcher
 # ---------------------------------------------------------------------------
 def _run_deep_probes(domain: str, initial_findings: dict) -> dict:
-    """Use AI to recommend and run deeper targeted tests."""
+    """Use AI with LIVE threat intel to recommend deeper targeted tests."""
+    live_cve_lines = initial_findings.get("live_cve_data", [])
+    cisa_lines = initial_findings.get("cisa_kev", [])
+    github_lines = initial_findings.get("github_advisories", [])
+
+    cve_text = "\n".join(live_cve_lines[:30]) if live_cve_lines else "(no live CVE data available)"
+    cisa_text = "\n".join(cisa_lines[:20]) if cisa_lines else "(no CISA KEV matches)"
+    github_text = "\n".join(github_lines[:20]) if github_lines else "(no GitHub advisories)"
+
     prompt = f"""
 You are an elite penetration tester performing an authorised test on {domain}.
 
-Initial findings:
+INITIAL FINDINGS:
 - Technologies: {initial_findings.get('technologies', [])}
 - Open ports: {initial_findings.get('open_ports', [])}
 - Web findings: {initial_findings.get('web_findings', [])}
 - CMS detected: {initial_findings.get('cms', 'unknown')}
 - WAF detected: {initial_findings.get('waf', [])}
+- Hidden parameters: {initial_findings.get('hidden_params', [])}
 
-Based only on this data, recommend the next 3 most valuable penetration tests to run.
+LIVE NVD CVE DATA:
+{cve_text}
+
+LIVE CISA KEV MATCHES:
+{cisa_text}
+
+LIVE GITHUB SECURITY ADVISORIES:
+{github_text}
+
+Based ONLY on the live data above plus the initial findings, recommend the next
+3 most valuable penetration tests.
+
 For each, give:
 1. Tool / manual technique
 2. Why it is likely to succeed
-3. One specific command or test payload (if applicable)
+3. One specific command or test payload
 
 Return a concise report.
 """
@@ -1709,6 +1815,11 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     if subfinder_subs:
         results["subdomains"] = sorted(set(results["subdomains"] + subfinder_subs))
 
+
+    results["subdomain_takeover"] = check_subdomain_takeover(results["subdomains"])
+    results["cloud_assets"] = check_cloud_assets(domain)
+
+
     results["live_urls"] = _run_httpx(domain)
     results["dns_records"] = _run_dnsx(domain) or results.get("dns_records", [])
     results["crawled_urls"] = _run_katana(domain)
@@ -1752,12 +1863,11 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         f"{h['ip']}: {', '.join(h['open_ports'])}"
         for h in results["nmap_hosts"]
     ]
+
     results["nikto_findings"] = _run_nikto(domain)
     results["nuclei_findings"] = _run_nuclei(domain)
-    if "wordpress" in " ".join(results.get("technologies", [])).lower():
-        results["wpscan_findings"] = _run_wpscan(domain)
-    else:
-        results["wpscan_findings"] = []
+    results["nuclei_evidence"] = _run_nuclei_evidence(domain)
+    results["wpscan_findings"] = _run_wpscan(domain)
     results["droopescan_findings"] = _run_droopescan(domain)
 
     # --------------------------- Exploit ---------------------------
@@ -1765,15 +1875,17 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     hidden_params = _run_arjun(domain)
     results["hidden_params"] = hidden_params
 
-    # Select test URLs: use parameterised URLs if found, else root URL
+    # Build concrete test URLs from discovered parameters
     if hidden_params:
-        test_urls = hidden_params[:3]
+        test_urls = _build_parameter_test_urls(hidden_params)
     else:
         test_urls = [f"https://{domain}/"]
 
     sqlmap_findings = []
     xss_findings = []
-    for url in test_urls:
+
+    # Cap heavy scans to avoid excessive runtime
+    for url in test_urls[:5]:
         sqlmap_findings.extend(_run_sqlmap_on_url(url))
         xss_findings.extend(_run_xss_on_url(url))
 
@@ -1811,6 +1923,11 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     results["email_lines"] = email_lines
 
     # --------------------------- Deep probes ---------------------------
+    # Build LIVE data for AI tactical insight
+    live_cve_data = results.get("correlated_findings", [])
+    cisa_kev = results.get("cisa_kev", [])
+    github_advisories = results.get("github_advisories", [])
+
     initial_findings = {
         "technologies": results.get("technologies", []),
         "open_ports": results.get("nmap_ports", []),
@@ -1818,6 +1935,10 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
         "cms": _detect_cms(domain, results.get("technologies", [])),
         "waf": results.get("waf", []),
         "directories": results.get("directories", []),
+        "hidden_params": results.get("hidden_params", []),
+        "live_cve_data": live_cve_data,
+        "cisa_kev": cisa_kev,
+        "github_advisories": github_advisories,
     }
 
     deep = _run_deep_probes(domain, initial_findings)
@@ -1827,17 +1948,33 @@ def security_mode(parameters: dict, player=None, speak=None) -> str:
     # --------------------------- Attack chain correlation ---------------------------
     try:
         from actions.attack_chain import correlate_vulnerabilities, execute_attack_chains
+        from core.threat_intel import fetch_github_advisories_by_cve
+
         attack_results = correlate_vulnerabilities(domain, results)
         results["attack_chains"] = attack_results.get("attack_chains", [])
         results["correlated_findings"] = attack_results.get("correlated_findings", [])
+        results["cisa_kev"] = attack_results.get("cisa_kev", [])
+
+        cve_ids = [
+            cve.get("cve_id")
+            for chain in results["attack_chains"]
+            for cve in chain.get("cves", [])
+        ]
+        results["github_advisories"] = fetch_github_advisories_by_cve(cve_ids, max_results=10)
+
         results["attack_evidence"] = execute_attack_chains(
             results.get("attack_chains", []),
             target=domain,
         )
+
+        # Merge Nuclei evidence with chain evidence
+        results["attack_evidence"].extend(results.get("nuclei_evidence", []))
     except Exception as e:
         print(f"[SecurityMode] ⚠️ Attack chain correlation failed: {e}")
         results["attack_chains"] = []
         results["correlated_findings"] = []
+        results["cisa_kev"] = []
+        results["github_advisories"] = []
         results["attack_evidence"] = []
 
     # --------------------------- Report ---------------------------
