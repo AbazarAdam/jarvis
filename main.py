@@ -34,6 +34,7 @@ from core.reflection import ReflectionMemory
 from core.episodic_memory import EpisodicMemory
 from core.workflow_scheduler import WorkflowScheduler
 from core.self_evaluation import SelfEvaluator
+from core.reset_controller import reset_controller
 
 
 from actions.file_processor import file_processor
@@ -678,6 +679,12 @@ class JarvisLive:
         self.episodic_memory = EpisodicMemory()
         self.self_evaluator = SelfEvaluator()
 
+        # True only for the reconnect immediately after STOP
+        self._was_hard_reset = False
+
+        # Tracks whether the next online event is after a hard reset
+        self._was_hard_reset = False
+
         # Hard reset support
         self._hard_reset_event = threading.Event()
         self._hard_reset_triggered = False
@@ -898,22 +905,11 @@ class JarvisLive:
             print(f"[JARVIS] ⚠️ Child process cleanup failed: {e}")
 
     def _reset_volatile_plugins(self):
-        """Reset in-memory plugin state after a hard reset."""
+        """Reset all volatile plugin/tool state using the global controller."""
         try:
-            import plugins.stopwatch as sw
-            with sw._lock:
-                sw._start_time = None
-                sw._elapsed = 0.0
+            reset_controller.reset_all()
         except Exception as e:
-            print(f"[JARVIS] ⚠️ Stopwatch reset failed: {e}")
-
-        try:
-            import actions.browser_control as bc
-            bc._bt._browser = None
-            bc._bt._context = None
-            bc._bt._page = None
-        except Exception:
-            pass
+            print(f"[JARVIS] ⚠️ Reset controller failed: {e}")
 
     async def _close_browser_safe(self):
         """Best-effort browser close after a hard reset.
@@ -959,6 +955,8 @@ class JarvisLive:
         """Full hard reset: kill all tasks, clear all state, force session restart."""
         print("[JARVIS] ⏹ Hard reset initiated.")
         self.ui.write_log("SYS: Hard reset initiated.")
+
+        self._was_hard_reset = True
 
         self.working_memory.save_checkpoint(
             last_task=self.working_memory.get_last_user_text()[:120],
@@ -1678,6 +1676,7 @@ class JarvisLive:
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
+
                     # Heartbeat: silent ping every 45s to prevent server-side timeout
                     async def _heartbeat():
                         while True:
@@ -1689,6 +1688,31 @@ class JarvisLive:
                             except Exception:
                                 break
                     tg.create_task(_heartbeat())
+
+                    # Prime the live session after STOP so voice works immediately.
+                    # Without this, Gemini Live sometimes waits for a text turn
+                    # before accepting audio again.
+                    if self._was_hard_reset:
+                        self._was_hard_reset = False
+                        try:
+                            await session.send_client_content(
+                                turns={"parts": [{"text": "JARVIS online, sir."}]},
+                                turn_complete=True,
+                            )
+                            print("[JARVIS] ✅ Live session primed after reset.")
+                        except Exception as e:
+                            print(f"[JARVIS] ⚠️ Prime turn failed: {e}")
+
+                    # Prime the live session after a hard reset so audio works immediately
+                    if self._was_hard_reset:
+                        self._was_hard_reset = False
+                        try:
+                            await session.send_client_content(
+                                turns={"parts": [{"text": "JARVIS online, sir."}]},
+                                turn_complete=True,
+                            )
+                        except Exception as e:
+                            print(f"[JARVIS] ⚠️ Prime turn failed: {e}")
 
                     self.ui.reset_complete()
                     self._ready_for_text = True

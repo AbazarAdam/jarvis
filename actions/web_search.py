@@ -120,17 +120,25 @@ def web_search(
     # This action requires internet/backends
     web_search.requires_internet = True
 
-    # Try OpenRouter/OpenAI-like client first, then fallback to DDG
+    # Try the stable model router first, then fallback to DDG
     try:
-        from or_client import client
-        result = client.chat(
-            query,
-            system="You are a web search assistant. Answer factually and concisely."
+        from core.model_router import ModelRouter
+
+        response = ModelRouter().generate(
+            prompt=query,
+            system="You are a web search assistant. Answer factually and concisely.",
+            temperature=0.2,
+            max_tokens=1200,
         )
-        print("[WebSearch] ✅ OpenRouter OK.")
-        return result
+
+        if response.get("success"):
+            result = response["text"].strip()
+            print("[WebSearch] ✅ ModelRouter OK.")
+            return result
+
+        raise RuntimeError(response.get("error") or "ModelRouter failed")
     except Exception as e:
-        print(f"[WebSearch] ⚠️ OpenRouter failed ({e}) — trying DDG...")
+        print(f"[WebSearch] ⚠️ ModelRouter failed ({e}) — trying DDG...")
         try:
             results = _ddg_search(query)
             result  = _format_ddg(query, results)

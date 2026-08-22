@@ -85,7 +85,7 @@ RISK_RULES = {
     "email_plugin": 2,
     "git_plugin": 3,
     "learning_mode": 1,
-    "system_management": 3,
+    "system_management": 1,
     "codebase_insight": 0,
 }
 
@@ -375,6 +375,10 @@ def assess_risk(capability: Capability, parameters: dict) -> tuple[bool, int, st
         params_risk = max(params_risk, 4)
     if name == "self_heal":
         params_risk = max(params_risk, 4)
+    if name == "system_management" and action in ("get_system_status", "status", "list", "info"):
+        params_risk = 0
+    if name == "system_management" and action in ("set_jarvis_feature", "set_power_plan"):
+        params_risk = max(params_risk, 2)
     if name == "git_plugin" and action in ("status", "diff", "log", "branch"):
         params_risk = 0
 

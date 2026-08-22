@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 import time
 
+from core.reset_controller import reset_controller
+
 
 PLUGIN_INFO = {
     "name": "stopwatch",
@@ -35,6 +37,16 @@ _start_time: float | None = None
 _elapsed: float = 0.0
 _lock = threading.Lock()
 
+
+def _reset_globals():
+    """Reset the stopwatch state. Called by the global reset controller."""
+    global _start_time, _elapsed
+    with _lock:
+        _start_time = None
+        _elapsed = 0.0
+
+
+reset_controller.register("stopwatch", _reset_globals)
 
 def _format_elapsed(seconds: float) -> str:
     seconds = max(0, int(seconds))

@@ -5,6 +5,8 @@ import concurrent.futures
 import platform
 import shutil
 import subprocess
+
+from core.reset_controller import reset_controller
 import time
 import random
 from pathlib import Path
@@ -594,6 +596,18 @@ class _BrowserThread:
 _bt         = _BrowserThread()
 _bt_started = False
 _bt_lock    = threading.Lock()
+
+def _reset_browser_state():
+    """Reset in-memory browser state on hard reset."""
+    try:
+        _bt._browser = None
+        _bt._context = None
+        _bt._page = None
+    except Exception:
+        pass
+
+
+reset_controller.register("browser_control", _reset_browser_state)
 
 
 def _ensure_started():
