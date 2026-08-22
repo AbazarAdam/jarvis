@@ -33,6 +33,7 @@ from core.context_manager import build_context
 from core.reflection import ReflectionMemory
 from core.episodic_memory import EpisodicMemory
 from core.workflow_scheduler import WorkflowScheduler
+from core.self_evaluation import SelfEvaluator
 
 
 from actions.file_processor import file_processor
@@ -675,6 +676,7 @@ class JarvisLive:
         self.working_memory = WorkingMemory()
         self.reflection = ReflectionMemory()
         self.episodic_memory = EpisodicMemory()
+        self.self_evaluator = SelfEvaluator()
 
         # Hard reset support
         self._hard_reset_event = threading.Event()
@@ -706,6 +708,26 @@ class JarvisLive:
                 self.proactive.note_user_activity(text)
         except Exception:
             pass
+
+    def _maybe_evaluate_task(self, tool_name: str, args: dict, result: str, outcome: str, error: str = ""):
+        """Run self-evaluation asynchronously after a background task finishes."""
+        def _run():
+            try:
+                evaluation = self.self_evaluator.evaluate(
+                    task=tool_name,
+                    params=args,
+                    result=result,
+                    outcome=outcome,
+                    error=error,
+                )
+                self.self_evaluator.record_evaluation(evaluation)
+                if evaluation.get("update_skill") and evaluation.get("skill_update_hint"):
+                    print(f"[SelfEval] 💡 Skill update hint: {evaluation['skill_update_hint']}")
+            except Exception as e:
+                print(f"[JARVIS] ⚠️ Self-evaluation failed: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session or not self._ready_for_text:
@@ -799,6 +821,7 @@ class JarvisLive:
                     outcome="success",
                     tool=tool_name,
                 )
+                self._maybe_evaluate_task(tool_name, args, str(result)[:200], "success")
             except Exception as e:
                 task = self.background_tasks.get(task_id)
                 if task:
@@ -812,6 +835,7 @@ class JarvisLive:
                     error=str(e),
                     tool=tool_name,
                 )
+                self._maybe_evaluate_task(tool_name, args, "", "failure", error=str(e))
                 from core.audit import log_action
                 log_action(tool_name, args, result=str(e), status="failed")
 
