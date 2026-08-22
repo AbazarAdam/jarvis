@@ -50,3 +50,4 @@ chrome_profile/
 memory/codebase_index.json
 memory/session_summary.json
 memory/reflection_log.json
+memory/proactive_patterns.json

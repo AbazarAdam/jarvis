@@ -696,12 +696,21 @@ class JarvisLive:
         with self._response_lock:
             return self._last_response
 
+    def _note_proactive_activity(self, text: str):
+        """Send user activity to the proactive engine if available."""
+        try:
+            if getattr(self, "proactive", None):
+                self.proactive.note_user_activity(text)
+        except Exception:
+            pass
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session or not self._ready_for_text:
             self.ui.write_log("SYS: JARVIS is still restarting. Please wait.")
             return
 
         self.working_memory.add_user(text)
+        self._note_proactive_activity(text)
 
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -710,7 +719,6 @@ class JarvisLive:
             ),
             self._loop
         )
-
 
     def _enqueue_out(self, item):
         """Synchronous helper to safely put an item into the out_queue from
@@ -1487,6 +1495,7 @@ class JarvisLive:
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
                                 self.working_memory.add_user(full_in)
+                                self._note_proactive_activity(full_in)
                             in_buf = []
 
                             full_out = self._clean_transcript(" ".join(out_buf))
@@ -1777,6 +1786,7 @@ def main():
 
         # Start proactive assistance after Jarvis begins running
         proactive = ProactiveAssistant()
+        proactive.speak_callback = jarvis.speak
         jarvis.proactive = proactive
 
         # Connect the UI toggle button to the proactive engine
