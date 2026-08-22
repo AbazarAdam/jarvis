@@ -31,6 +31,7 @@ from memory.memory_manager import (
 from core.conversation_memory import WorkingMemory
 from core.context_manager import build_context
 from core.reflection import ReflectionMemory
+from core.episodic_memory import EpisodicMemory
 from core.workflow_scheduler import WorkflowScheduler
 
 
@@ -673,6 +674,7 @@ class JarvisLive:
         # Cognitive memory
         self.working_memory = WorkingMemory()
         self.reflection = ReflectionMemory()
+        self.episodic_memory = EpisodicMemory()
 
         # Hard reset support
         self._hard_reset_event = threading.Event()
@@ -1004,6 +1006,7 @@ class JarvisLive:
         context = build_context(
             working_memory=self.working_memory,
             reflection_memory=self.reflection,
+            episodic_memory=self.episodic_memory,
         )
         combined = f"{context['combined']}\n\n{sys_prompt}"
 
@@ -1516,6 +1519,22 @@ class JarvisLive:
                                     last_task=full_in[:120] if full_in else "",
                                     summary=full_out[:200] if full_out else "",
                                 )
+
+                            # Episodic compression after enough recent turns
+                            recent_count = len(self.working_memory.get_recent_turns())
+                            if recent_count >= 8:
+                                try:
+                                    summary = self.episodic_memory.summarise_working_memory(
+                                        self.working_memory.to_context_text(limit=8)
+                                    )
+                                    if summary:
+                                        self.episodic_memory.add_episode(
+                                            summary=summary,
+                                            turns=recent_count,
+                                            source="working_memory",
+                                        )
+                                except Exception as e:
+                                    print(f"[JARVIS] ⚠️ Episodic summarise failed: {e}")
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(

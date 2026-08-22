@@ -22,6 +22,7 @@ from typing import Optional
 from core.conversation_memory import WorkingMemory
 from core.skill_store import SkillStore
 from core.reflection import ReflectionMemory
+from core.episodic_memory import EpisodicMemory
 
 
 def _format_time() -> str:
@@ -66,6 +67,7 @@ def _format_skills() -> str:
 def build_context(
     working_memory: Optional[WorkingMemory] = None,
     reflection_memory: Optional[ReflectionMemory] = None,
+    episodic_memory: Optional[EpisodicMemory] = None,
     extra_instructions: Optional[str] = None,
 ) -> dict[str, str]:
     """
@@ -97,6 +99,11 @@ def build_context(
     else:
         reflection_str = reflection_memory.to_context_text(limit=6)
 
+    if episodic_memory is None:
+        episodic_str = "(no episodic memory)"
+    else:
+        episodic_str = episodic_memory.to_context_text(limit=3)
+
     checkpoint_lines = []
     if checkpoint.get("last_task"):
         checkpoint_lines.append(f"Last task: {checkpoint['last_task']}")
@@ -122,6 +129,9 @@ def build_context(
         "[REFLECTION MEMORY]",
         reflection_str,
         "",
+        "[EPISODIC MEMORY]",
+        episodic_str,
+        "",
         "[RECENT CONVERSATION]",
         working_str,
         "",
@@ -136,6 +146,7 @@ def build_context(
         "session_checkpoint": checkpoint_str,
         "skills": skills_str,
         "reflection_memory": reflection_str,
+        "episodic_memory": episodic_str,
         "extra_instructions": extra_str,
         "combined": "\n".join(combined_parts),
     }
