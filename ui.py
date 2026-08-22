@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
 
         hdr = QLabel("SYSTEM VITALS")
         hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
 
         lay.addWidget(hdr)
 
@@ -1073,7 +1073,8 @@ class MainWindow(QMainWindow):
 
         hdr = QLabel("ACTIVITY LOG")
         hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
+        
         lay.addWidget(hdr)
 
         self._log = LogWidget()

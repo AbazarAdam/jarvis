@@ -28,6 +28,11 @@ from memory.memory_manager import (
     should_extract_memory, extract_memory
 )
 
+from core.conversation_memory import WorkingMemory
+from core.context_manager import build_context
+from core.reflection import ReflectionMemory
+
+
 from actions.file_processor import file_processor
 from actions.open_app          import open_app
 from actions.reminder          import reminder
@@ -664,6 +669,10 @@ class JarvisLive:
         self._response_lock = threading.Lock()
         self.background_tasks = {}
 
+        # Cognitive memory
+        self.working_memory = WorkingMemory()
+        self.reflection = ReflectionMemory()
+
         # Hard reset support
         self._hard_reset_event = threading.Event()
         self._hard_reset_triggered = False
@@ -691,6 +700,9 @@ class JarvisLive:
         if not self._loop or not self.session or not self._ready_for_text:
             self.ui.write_log("SYS: JARVIS is still restarting. Please wait.")
             return
+
+        self.working_memory.add_user(text)
+
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -770,14 +782,28 @@ class JarvisLive:
                     task["status"] = "completed"
                     task["result"] = result
                 self._announce_local(f"{tool_name} completed, sir.")
+                self.reflection.record(
+                    goal=tool_name,
+                    result=str(result)[:200],
+                    outcome="success",
+                    tool=tool_name,
+                )
             except Exception as e:
                 task = self.background_tasks.get(task_id)
                 if task:
                     task["status"] = "failed"
                     task["result"] = str(e)
                 self._announce_local(f"{tool_name} failed, sir.")
+                self.reflection.record(
+                    goal=tool_name,
+                    result="",
+                    outcome="failure",
+                    error=str(e),
+                    tool=tool_name,
+                )
                 from core.audit import log_action
                 log_action(tool_name, args, result=str(e), status="failed")
+
         thread = threading.Thread(target=wrapper, daemon=True)
         self._background_threads[task_id] = thread
         thread.start()
@@ -899,6 +925,11 @@ class JarvisLive:
         print("[JARVIS] ⏹ Hard reset initiated.")
         self.ui.write_log("SYS: Hard reset initiated.")
 
+        self.working_memory.save_checkpoint(
+            last_task=self.working_memory.get_last_user_text()[:120],
+            summary=self.working_memory.get_last_jarvis_text()[:200],
+        )
+
         # Mark that a hard reset is in progress
         self._hard_reset_triggered = True
 
@@ -959,30 +990,16 @@ class JarvisLive:
 
 
     def _build_config(self) -> types.LiveConnectConfig:
-        from datetime import datetime
-
-        memory     = load_memory()
-        mem_str    = format_memory_for_prompt(memory)
         sys_prompt = _load_system_prompt()
 
-        now      = datetime.now()
-        time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
-        time_ctx = (
-            f"[CURRENT DATE & TIME]\n"
-            f"Right now it is: {time_str}\n"
-            f"Use this to calculate exact times for reminders.\n\n"
-        )
-
-        parts = [time_ctx]
-        if mem_str:
-            parts.append(mem_str)
-        parts.append(sys_prompt)
+        context = build_context(working_memory=self.working_memory)
+        combined = f"{context['combined']}\n\n{sys_prompt}"
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
-            system_instruction="\n".join(parts),
+            system_instruction=combined,
             tools=[{"function_declarations": TOOL_DECLARATIONS + PLUGIN_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
@@ -1466,6 +1483,7 @@ class JarvisLive:
                             full_in = self._clean_transcript(" ".join(in_buf))
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
+                                self.working_memory.add_user(full_in)
                             in_buf = []
 
                             full_out = self._clean_transcript(" ".join(out_buf))
@@ -1474,10 +1492,17 @@ class JarvisLive:
 
                             if full_out:
                                 self.ui.write_log(f"Jarvis: {full_out}")
+                                self.working_memory.add_jarvis(full_out)
                             else:
                                 self.ui.write_log("Jarvis: (voice response)")
 
                             out_buf = []
+
+                            if full_in or full_out:
+                                self.working_memory.save_checkpoint(
+                                    last_task=full_in[:120] if full_in else "",
+                                    summary=full_out[:200] if full_out else "",
+                                )
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(

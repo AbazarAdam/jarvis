@@ -48,3 +48,5 @@ tools/whatweb/
 chrome_profile/
 .coverage
 memory/codebase_index.json
+memory/session_summary.json
+memory/reflection_log.json
