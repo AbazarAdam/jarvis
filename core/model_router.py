@@ -20,6 +20,8 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+import requests
+
 # No core.error_handler import needed here.
 
 
@@ -86,6 +88,7 @@ class ModelRouter:
         self._gemini_model = "gemini-2.5-flash"
         self._openrouter_model = "nvidia/nemotron-3-nano-30b-a3b:free"
         self._groq_model = "llama-3.3-70b-versatile"
+        self._last_openrouter_model: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Cooldown helpers
@@ -140,42 +143,73 @@ class ModelRouter:
         return text
 
     def _try_openrouter(self, messages: list[dict], temperature: float, max_tokens: int) -> str:
-        """Try OpenRouter. Raises on failure."""
-        from or_client import client
+        """Call OpenRouter directly using the chat completions API.
 
-        # Convert old-style system string if needed
-        system = None
-        clean_messages = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                system = msg.get("content", "")
-            else:
-                clean_messages.append({"role": msg["role"], "content": msg["content"]})
+        Uses a small curated model list and remembers the last working model.
+        This avoids the old or_client dead-model fallback storm.
+        """
+        api_key = _get_key("openrouter_api_key")
+        if not api_key:
+            raise RuntimeError("OpenRouter API key not configured.")
 
-        try:
-            # or_client has `multi_turn(messages, ...)` in some paths.
-            result = client.multi_turn(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            if result:
-                return result
-        except Exception:
-            # Some or_client versions may only support chat(query, system=...)
-            user_text = "\n".join(
-                msg.get("content", "") for msg in messages if msg.get("role") == "user"
-            )
-            if not user_text:
-                raise
-            result = client.chat(
-                user_text,
-                system=system or "You are JARVIS, a highly capable AI assistant.",
-            )
-            if result:
-                return result
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/AbazarAdam/jarvis",
+            "X-Title": "JARVIS",
+        }
 
-        raise RuntimeError("OpenRouter returned empty response.")
+        candidate_models = [
+            self._last_openrouter_model,
+            self._openrouter_model,
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        ]
+        candidate_models = [m for m in candidate_models if m]
+
+        last_error = ""
+
+        for model in candidate_models:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                except Exception:
+                    content = ""
+
+                if content and content.strip():
+                    self._last_openrouter_model = model
+                    return content.strip()
+
+                last_error = "OpenRouter returned empty content."
+                continue
+
+            if resp.status_code in (429, 403, 401):
+                # Rate limit/auth error. Stop trying other models because the
+                # issue is account-level, not model-level.
+                raise RuntimeError(f"OpenRouter HTTP {resp.status_code}: {resp.text[:200]}")
+
+            if resp.status_code == 404:
+                last_error = f"Model not found: {model}"
+                continue
+
+            last_error = f"OpenRouter HTTP {resp.status_code}: {resp.text[:200]}"
+
+        raise RuntimeError(last_error or "OpenRouter failed.")
 
     def _try_groq(self, messages: list[dict], temperature: float, max_tokens: int) -> str:
         """Try Groq. Raises on failure."""
