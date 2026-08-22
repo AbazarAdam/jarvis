@@ -80,14 +80,20 @@ def _llm_chat(
     temperature: float = 0.2,
     max_tokens: int = 4096,
 ) -> str:
-    """Use Groq/OpenRouter through or_client; falls back gracefully."""
-    from or_client import client
-    return client.chat(
-        prompt,
+    """Use the stable central ModelRouter instead of deprecated or_client."""
+    from core.model_router import ModelRouter
+
+    response = ModelRouter().generate(
+        prompt=prompt,
         system=system,
         temperature=temperature,
         max_tokens=max_tokens,
     )
+
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "Cloud model failed.")
+
+    return response["text"].strip()
 
 
 def _resolve_save_path(output_path: str, language: str) -> Path:
@@ -529,6 +535,35 @@ def _self_fix(path: Path, max_attempts: int = 3) -> str:
     _save_file(path, original)
     _log(f"Self-fix failed after {max_attempts} attempts, rolled back {path}")
     return f"Self-fix failed after {max_attempts} attempts. Rolled back."
+
+def _screen_debug_action(description: str, file_path: str, player=None, speak=None) -> str:
+    """
+    Capture a screenshot, analyse it with vision if available, and optionally
+    return a debugging suggestion.
+
+    This is a safe fallback implementation. It delegates vision analysis to
+    JARVIS's existing screen processor when possible.
+    """
+    if not description:
+        return "Please describe the issue you are seeing, sir."
+
+    if speak:
+        speak("Analysing the current screen for debugging, sir.")
+
+    try:
+        from actions.screen_processor import screen_process
+
+        result = screen_process(
+            parameters={"angle": "screen", "text": description},
+            player=player,
+            session_memory=None,
+        )
+        return result or "Screen analysis completed, sir."
+    except Exception as e:
+        return (
+            "I could not run the screen debugger automatically, sir. "
+            f"Reason: {e}. Please provide the file path or error text manually."
+        )
 
 def code_helper(
     parameters: dict,

@@ -397,35 +397,28 @@ def update_tools() -> str:
     return summary
 
 
-
 def _get_llm_insight(prompt: str) -> str:
-    """
-    Use Groq/Gemini to get tactical recommendations during the pentest.
-    """
+    """Use the central model router for tactical recommendations."""
     try:
-        from groq_client import groq_client
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an elite penetration tester. "
-                    "Analyse the data and return a concise, actionable plan. "
-                    "Be direct and technical."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-        return groq_client.chat(messages, temperature=0.2, max_tokens=1500)
+        from core.model_router import ModelRouter
+
+        response = ModelRouter().generate(
+            prompt=prompt,
+            system=(
+                "You are an elite penetration tester. "
+                "Analyse the data and return a concise, actionable plan. "
+                "Be direct and technical."
+            ),
+            temperature=0.2,
+            max_tokens=1500,
+        )
+
+        if response.get("success"):
+            return response["text"].strip()
+
+        return "No AI insight available."
     except Exception:
-        try:
-            from or_client import client
-            messages = [
-                {"role": "system", "content": "You are an elite penetration tester."},
-                {"role": "user", "content": prompt},
-            ]
-            return client.multi_turn(messages, temperature=0.2, max_tokens=1500)
-        except Exception:
-            return "No AI insight available."
+        return "No AI insight available."
 
 
 def _generate_ai_commands(domain: str, technologies: list[str], waf: list[str]) -> list[str]:

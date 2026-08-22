@@ -28,86 +28,82 @@ def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
-def _run_generated_code(description: str, speak: Callable | None = None) -> str:
-    import google.generativeai as genai
 
+def _call_cloud_llm(messages: list[dict], max_tokens: int = 1800) -> str:
+    """Use the central ModelRouter instead of deprecated google.generativeai."""
+    from core.model_router import ModelRouter
+
+    response = ModelRouter().chat(
+        messages=messages,
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "Cloud model failed.")
+
+    return response["text"].strip()
+
+def _run_generated_code(description: str, speak: Callable | None = None) -> str:
     if speak:
         speak("Writing custom code for this task, sir.")
 
-    home      = Path.home()
-    desktop   = home / "Desktop"
+    home = Path.home()
+    desktop = home / "Desktop"
     downloads = home / "Downloads"
     documents = home / "Documents"
 
-    if not desktop.exists():
-        try:
-            import winreg
-            key     = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders")
-            desktop = Path(winreg.QueryValueEx(key, "Desktop")[0])
-        except Exception:
-            pass
+    prompt = (
+        "You are an expert Python developer. "
+        "Write clean, complete, working Python code. "
+        "Use standard library + common packages. "
+        "Install missing packages with subprocess + pip if needed. "
+        "Return ONLY the Python code. No explanation, no markdown, no backticks.\n\n"
+        f"SYSTEM PATHS:\n"
+        f"  Desktop   = r'{desktop}'\n"
+        f"  Downloads = r'{downloads}'\n"
+        f"  Documents = r'{documents}'\n"
+        f"  Home      = r'{home}'\n\n"
+        f"Write Python code to accomplish this task:\n\n{description}"
+    )
 
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=(
-            "You are an expert Python developer. "
-            "Write clean, complete, working Python code. "
-            "Use standard library + common packages. "
-            "Install missing packages with subprocess + pip if needed. "
-            "Return ONLY the Python code. No explanation, no markdown, no backticks.\n\n"
-            f"SYSTEM PATHS:\n"
-            f"  Desktop   = r'{desktop}'\n"
-            f"  Downloads = r'{downloads}'\n"
-            f"  Documents = r'{documents}'\n"
-            f"  Home      = r'{home}'\n"
-        )
+    messages = [
+        {"role": "system", "content": "You are an elite software engineer. Return only Python code."},
+        {"role": "user", "content": prompt},
+    ]
+
+    code = _call_cloud_llm(messages, max_tokens=3000)
+    code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(code)
+        tmp_path = f.name
+
+    print(f"[Executor] 🐍 Running generated code: {tmp_path}")
+
+    result = subprocess.run(
+        [sys.executable, tmp_path],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(Path.home()),
     )
 
     try:
-        response = model.generate_content(
-            f"Write Python code to accomplish this task:\n\n{description}"
-        )
-        code = response.text.strip()
-        code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
+        os.unlink(tmp_path)
+    except Exception:
+        pass
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(code)
-            tmp_path = f.name
+    output = result.stdout.strip()
+    error = result.stderr.strip()
 
-        print(f"[Executor] 🐍 Running generated code: {tmp_path}")
-
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True, text=True,
-            timeout=120, cwd=str(Path.home())
-        )
-
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-        output = result.stdout.strip()
-        error  = result.stderr.strip()
-
-        if result.returncode == 0 and output:
-            return output
-        elif result.returncode == 0:
-            return "Task completed successfully."
-        elif error:
-            raise RuntimeError(f"Code error: {error[:400]}")
-        return "Completed."
-
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Generated code timed out after 120 seconds.")
-    except RuntimeError:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"Generated code failed: {e}")
+    if result.returncode == 0 and output:
+        return output
+    if result.returncode == 0:
+        return "Task completed successfully."
+    if error:
+        raise RuntimeError(f"Code error: {error[:400]}")
+    return "Completed."
 
 def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "") -> dict:
     if not step_results:
@@ -135,17 +131,14 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
 
     return params
 
+
 def _detect_language(text: str) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     try:
-        response = model.generate_content(
-            f"What language is this text written in? "
-            f"Reply with ONLY the language name in English (e.g. Turkish, English, French).\n\n"
-            f"Text: {text[:200]}"
-        )
-        return response.text.strip()
+        messages = [
+            {"role": "system", "content": "Reply with ONLY the language name in English."},
+            {"role": "user", "content": f"What language is this text written in?\n\nText: {text[:200]}"},
+        ]
+        return _call_cloud_llm(messages, max_tokens=20).strip()
     except Exception:
         return "English"
 
@@ -154,10 +147,6 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
     if not goal:
         return content
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash")
-
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
 
@@ -171,13 +160,20 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
             f"- Output ONLY the translated text, nothing else\n\n"
             f"Text to translate:\n{content[:4000]}"
         )
-        response = model.generate_content(prompt)
-        translated = response.text.strip()
+
+        messages = [
+            {"role": "system", "content": "You are a professional translator. Return only the translated text."},
+            {"role": "user", "content": prompt},
+        ]
+
+        translated = _call_cloud_llm(messages, max_tokens=3000)
         print(f"[Executor] ✅ Translation done ({target_lang})")
         return translated
     except Exception as e:
         print(f"[Executor] ⚠️ Translation failed: {e}")
         return content
+    
+
 
 def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
 
@@ -414,11 +410,8 @@ class AgentExecutor:
     def _summarize(self, goal: str, completed_steps: list, speak: Callable | None) -> str:
         fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=_get_api_key())
-            model     = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
-            prompt    = (
+            prompt = (
                 f'User goal: "{goal}"\n'
                 f"Completed steps:\n{steps_str}\n\n"
                 "Write ONE short, natural sentence confirming completion. "
@@ -426,10 +419,20 @@ class AgentExecutor:
                 "Vary the wording: e.g., 'The report is on your desktop.', 'All finished, sir.', 'Here you go, sir.' "
                 "Be warm but concise."
             )
-            response = model.generate_content(prompt)
-            summary  = response.text.strip()
-            if speak: speak(summary)
-            return summary
+
+            messages = [
+                {"role": "system", "content": "You are JARVIS. Summarise completion naturally."},
+                {"role": "user", "content": prompt},
+            ]
+
+            summary = _call_cloud_llm(messages, max_tokens=120)
+            if summary:
+                if speak:
+                    speak(summary)
+                return summary
         except Exception:
-            if speak: speak(fallback)
-            return fallback
+            pass
+
+        if speak:
+            speak(fallback)
+        return fallback
