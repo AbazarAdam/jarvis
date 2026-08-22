@@ -31,6 +31,7 @@ from memory.memory_manager import (
 from core.conversation_memory import WorkingMemory
 from core.context_manager import build_context
 from core.reflection import ReflectionMemory
+from core.workflow_scheduler import WorkflowScheduler
 
 
 from actions.file_processor import file_processor
@@ -1788,6 +1789,15 @@ def main():
         proactive = ProactiveAssistant()
         proactive.speak_callback = jarvis.speak
         jarvis.proactive = proactive
+
+        # Autonomous workflow scheduler
+        from core.workflow_scheduler import WorkflowScheduler
+        from plugins.workflow_scheduler import run_tool_by_name
+
+        scheduler = WorkflowScheduler()
+        scheduler.set_executor(lambda tool_name, params: run_tool_by_name(tool_name, params, player=jarvis.ui, speak=jarvis.speak))
+        scheduler.start()
+        jarvis.scheduler = scheduler
 
         # Connect the UI toggle button to the proactive engine
         ui._win._proactive_toggle_signal.connect(proactive.set_enabled)
