@@ -992,7 +992,10 @@ class JarvisLive:
     def _build_config(self) -> types.LiveConnectConfig:
         sys_prompt = _load_system_prompt()
 
-        context = build_context(working_memory=self.working_memory)
+        context = build_context(
+            working_memory=self.working_memory,
+            reflection_memory=self.reflection,
+        )
         combined = f"{context['combined']}\n\n{sys_prompt}"
 
         return types.LiveConnectConfig(
