@@ -1123,7 +1123,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(8)
 
         self._input = CommandInput()
-        self._input.setPlaceholderText("Type a command or question…  (Shift+Enter for new line)")
+        self._input.setPlaceholderText("Type a command or question…")
         self._input.setFont(QFont("Segoe UI", 9))
         self._input.setMinimumHeight(40)
         self._input.setMaximumHeight(120)
