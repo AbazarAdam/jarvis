@@ -7,8 +7,11 @@ file, runs tests, and rolls back if the fix breaks anything.
 
 import subprocess
 import sys
+import json
 from pathlib import Path
 from datetime import datetime
+
+from core.reflection import ReflectionMemory
 
 
 BASE_DIR   = Path(__file__).resolve().parent.parent
@@ -132,40 +135,81 @@ def _run_tests() -> str:
 
 
 def _llm_analyse_and_fix(error_text: str, file_relative: str | None) -> tuple[str, str]:
-    """Use Groq/OpenRouter to analyse the error and return a fixed file path + code."""
-    from or_client import client
+    """Use the stable ModelRouter to analyse the error and return fixed code."""
+    from core.model_router import ModelRouter
+
+    memory = ReflectionMemory()
+    known_fixes = []
+
+    try:
+        for event in memory.find_similar_error(error_text, limit=3):
+            fix = event.get("fix_used") or ""
+            if fix:
+                known_fixes.append(fix)
+    except Exception:
+        pass
+
+    known_fix_hint = ""
+    if known_fixes:
+        known_fix_hint = (
+            "\nKnown fixes from previous similar errors:\n"
+            + "\n".join(f"- {f}" for f in known_fixes[:2])
+        )
 
     if file_relative:
         file_path = BASE_DIR / file_relative
         code = file_path.read_text(encoding="utf-8", errors="ignore")
+
         prompt = (
             "You are an expert Python debugger.\n"
             f"File to fix: {file_relative}\n"
-            f"Error:\n{error_text}\n\n"
+            f"Error:\n{error_text}\n"
+            f"{known_fix_hint}\n\n"
             "Return ONLY the complete corrected Python code for this file. No markdown."
         )
-        system = "You fix production Python code. Return only the corrected code."
-        fixed_code = client.chat(prompt, system=system)
-        return file_relative, fixed_code
+
+        response = ModelRouter().generate(
+            prompt=prompt,
+            system="You fix production Python code. Return only the corrected code.",
+            temperature=0.2,
+            max_tokens=4000,
+        )
+
+        if not response.get("success"):
+            raise RuntimeError(response.get("error") or "Model router failed.")
+
+        return file_relative, response["text"].strip()
+
     else:
-        # No specific file found – ask LLM for general recommendation
         prompt = (
             "Analyze the following error and suggest which project file should be fixed, "
             "and provide the corrected code for that file.\n"
-            f"Error:\n{error_text}\n\n"
+            f"Error:\n{error_text}\n"
             "Return JSON with 'file' and 'code'. Only JSON."
         )
-        try:
-            from or_client import client as c
-            data = c.chat_json(prompt)
-            return data.get("file", ""), data.get("code", "")
-        except Exception:
-            return "", ""
+
+        response = ModelRouter().generate(
+            prompt=prompt,
+            system="Return only JSON.",
+            temperature=0.1,
+            max_tokens=4000,
+        )
+
+        if response.get("success"):
+            try:
+                data = json.loads(response["text"].strip())
+                return data.get("file", ""), data.get("code", "")
+            except Exception:
+                pass
+
+        return "", ""
 
 
 def run_self_heal(speak=None) -> str:
-    """Run self‑heal with file backup and rollback."""
-    _log("Self‑heal started.")
+    """Run self-heal with file backup, rollback, and reflection memory."""
+    _log("Self-heal started.")
+    memory = ReflectionMemory()
+
     error_text = _read_last_error()
 
     if not error_text:
@@ -188,7 +232,6 @@ def run_self_heal(speak=None) -> str:
             speak(f"I refused to modify {file_relative} because it is protected, sir.")
         return "Aborted: protected file."
 
-    # Create file backup
     backup_path = _backup_file(target)
     if not backup_path:
         _log("Could not create backup. Aborting.")
@@ -196,12 +239,20 @@ def run_self_heal(speak=None) -> str:
             speak("I could not create a backup, so I will not modify any files, sir.")
         return "Aborted: backup failed."
 
-    # Fix the file
     try:
         new_file, fixed_code = _llm_analyse_and_fix(error_text, file_relative)
         if not fixed_code.strip():
             _restore_file(target, backup_path)
             _log("LLM returned empty fix. Rolled back.")
+            memory.record_event(
+                goal="self_heal",
+                outcome="failure",
+                event_type="fix",
+                error=error_text,
+                fix="",
+                tool="self_heal",
+                context=file_relative,
+            )
             if speak:
                 speak("The fix was empty, so I rolled back without changes, sir.")
             return "Rolled back: empty fix."
@@ -211,24 +262,50 @@ def run_self_heal(speak=None) -> str:
     except Exception as e:
         _restore_file(target, backup_path)
         _log(f"Fix failed: {e}. Rolled back.")
+        memory.record_event(
+            goal="self_heal",
+            outcome="failure",
+            event_type="fix",
+            error=error_text,
+            fix="",
+            tool="self_heal",
+            context=file_relative,
+        )
         if speak:
             speak(f"The fix failed and I rolled back, sir. Error: {e}")
         return f"Rolled back after failure: {e}"
 
-    # Run tests
     test_output = _run_tests()
     if "FAILED" in test_output or "ERROR" in test_output:
         _restore_file(target, backup_path)
         _log(f"Tests failed after fix. Rolled back.\n{test_output}")
+        memory.record_event(
+            goal="self_heal",
+            outcome="failure",
+            event_type="fix",
+            error=error_text,
+            fix="",
+            tool="self_heal",
+            context=file_relative,
+        )
         if speak:
             speak("The fix broke the tests, so I rolled back, sir.")
         return "Rolled back: tests failed."
 
-    # Keep fix and record success
-    _log("Self‑heal successful. Tests pass.")
+    _log("Self-heal successful. Tests pass.")
+    memory.record_event(
+        goal="self_heal",
+        outcome="success",
+        event_type="fix",
+        error=error_text,
+        fix=f"Fixed {file_relative}",
+        tool="self_heal",
+        context=file_relative,
+    )
+
     if speak:
-        speak("Self‑healing completed successfully, sir. All tests pass.")
-    return f"Self‑healing complete. Fixed {file_relative}."
+        speak("Self-healing completed successfully, sir. All tests pass.")
+    return f"Self-healing complete. Fixed {file_relative}."
 
 
 def self_heal(parameters: dict, player=None, speak=None) -> str:

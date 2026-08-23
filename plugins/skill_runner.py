@@ -27,7 +27,7 @@ PLUGIN_INFO = {
     "description": (
         "Manage and execute learned JARVIS skills. "
         "Use this when no existing tool matches the user's request. "
-        "Actions: list, status, run, create."
+        "Actions: list, status, run, create, update, find."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -130,6 +130,39 @@ def execute(parameters: dict, player=None, speak=None) -> str:
                 return f"Skill ran but could not save result: {e}"
 
         return output or "Skill executed."
+
+    elif action == "update":
+        code = (parameters or {}).get("code", "").strip()
+        if not code:
+            return "Please provide the new code for the skill, sir."
+
+        result = store.update_skill_code(
+            name=name,
+            new_code=code,
+            new_description=parameters.get("description"),
+        )
+
+        if result.get("updated"):
+            skill = result["skill"]
+            return f"Skill '{skill.get('name')}' updated to version {skill.get('version')}, sir."
+        return f"Could not update skill: {result.get('reason', 'unknown')}"
+
+    elif action == "find":
+        query = (parameters or {}).get("query", "").strip()
+        if not query:
+            return "Please provide a query to find a matching skill, sir."
+
+        skills = store.find_skill_by_query(query, limit=5)
+        if not skills:
+            return "No matching active skills found, sir."
+
+        lines = []
+        for s in skills:
+            lines.append(
+                f"- {s.get('name')} [v{s.get('version', 1)}] "
+                f"confidence={s.get('confidence', 0):.2f}: {s.get('description', '')}"
+            )
+        return "Matching skills:\n" + "\n".join(lines)
 
     elif action == "create":
         description = (parameters or {}).get("description", "").strip()

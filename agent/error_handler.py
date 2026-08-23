@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from enum import Enum
 
+from core.reflection import ReflectionMemory
+
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -54,6 +56,24 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
+def _lookup_known_fix(error_text: str) -> str | None:
+    """
+    Search reflection memory for a previous fix for the same error fingerprint.
+
+    Returns the last known fix string if found, otherwise None.
+    """
+    try:
+        memory = ReflectionMemory()
+        matches = memory.find_similar_error(error_text, limit=3)
+        for event in matches:
+            fix = event.get("fix_used") or event.get("recommended_fix") or ""
+            if fix:
+                return fix
+    except Exception:
+        pass
+    return None
+
+
 def _call_cloud_llm(messages: list[dict], max_tokens: int = 1800) -> str:
     """Use the stable central ModelRouter instead of deprecated Gemini SDK."""
     from core.model_router import ModelRouter
@@ -102,6 +122,18 @@ def analyze_error(
             "fix_suggestion": "Try a completely different approach or tool",
             "max_retries":    0,
             "user_message":   "Trying a different approach, sir."
+        }
+
+    # Check whether JARVIS has already solved this exact error before
+    known_fix = _lookup_known_fix(error)
+    if known_fix:
+        print(f"[ErrorHandler] 🧠 Known fix found: {known_fix[:120]}")
+        return {
+            "decision":       ErrorDecision.REPLAN,
+            "reason":         "Previously fixed similar error.",
+            "fix_suggestion": known_fix,
+            "max_retries":    0,
+            "user_message":   "I've seen this before, sir. Applying the known fix.",
         }
 
     prompt = f"""Failed step:

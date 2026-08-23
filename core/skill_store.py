@@ -167,11 +167,13 @@ class SkillStore:
                 "success_count": 0,
                 "fail_count": 0,
                 "confidence": 0.4,
+                "version": 1,
                 "risk_level": risk_level,
                 "side_effects": side_effects or [],
                 "keywords": keywords or [],
                 "parameters": parameters or {},
                 "created_at": datetime.now().isoformat(timespec="seconds"),
+                "updated_at": None,
                 "last_used": None,
             }
 
@@ -249,6 +251,72 @@ class SkillStore:
                 return
             meta["status"] = status
             self._write_meta(name, meta)
+
+    def update_skill_code(
+        self,
+        name: str,
+        new_code: str,
+        new_description: str | None = None,
+    ) -> dict:
+        """
+        Update an existing skill with new code.
+
+        The old version is retained as version history implicitly through
+        the file backup directory, not stored in memory to keep this simple.
+        """
+        with self._lock:
+            meta = self._load_meta(name)
+            if not meta:
+                return {"updated": False, "reason": "not_found"}
+
+            safe, violations = validate_code(new_code)
+            if not safe:
+                return {"updated": False, "reason": "unsafe_code", "violations": violations}
+
+            old_code = self.load_code(name)
+            code_path = self._code_path(name)
+            code_path.write_text(new_code, encoding="utf-8")
+
+            meta["version"] = int(meta.get("version", 1)) + 1
+            meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            if new_description:
+                meta["description"] = new_description
+
+            # Small confidence boost for manual/automatic improvement,
+            # but keep candidate status until proven by success.
+            meta["confidence"] = min(1.0, float(meta.get("confidence", 0.4)) + 0.05)
+            meta["status"] = "candidate"
+
+            self._write_meta(name, meta)
+            return {"updated": True, "skill": meta, "old_code": old_code, "new_code": new_code}
+
+    def find_skill_by_query(self, query: str, limit: int = 3) -> list[dict]:
+        """
+        Return active skills whose name/description/keywords best match a query.
+
+        This is a simple semantic-like search without embeddings.
+        """
+        query_tokens = set(re.findall(r"[a-z0-9]+", (query or "").lower()))
+        if not query_tokens:
+            return []
+
+        scored = []
+        with self._lock:
+            for meta in self.list_skills(include_all=False):
+                haystack = " ".join([
+                    meta.get("name", ""),
+                    meta.get("description", ""),
+                    " ".join(meta.get("keywords", [])),
+                ]).lower()
+                hay_tokens = set(re.findall(r"[a-z0-9]+", haystack))
+                overlap = query_tokens.intersection(hay_tokens)
+                if not overlap:
+                    continue
+                score = len(overlap) / max(1, len(query_tokens))
+                scored.append((score, meta))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [meta for _, meta in scored[:limit]]
 
     def delete_skill(self, name: str, confirmed: str = "no") -> dict:
         """Delete a skill only after explicit confirmation."""
