@@ -80,89 +80,190 @@ def _extract_code(text: str) -> str:
     return text
 
 
-def _generate_spec(description: str, project_name: str, language: Optional[str], router: ModelRouter) -> dict:
-    """
-    Generate a language-aware project plan as JSON.
+def _repair_json(raw: str) -> dict:
+    """Try hard to parse model output as JSON, repairing simple truncation."""
+    start = raw.find("{")
+    if start == -1:
+        raise RuntimeError("No JSON object found.")
 
-    The model must return commands.run and commands.test because they differ
-    by language and framework.
-    """
-    language_instruction = (
-        f"Use the language/framework: {language}. "
-        if language
-        else "Infer the best language/framework from the requirement. "
-    )
+    decoder = json.JSONDecoder()
 
-    prompt = f"""
-Generate a complete project plan for this requirement:
+    # Try normal parse first
+    try:
+        return decoder.raw_decode(raw[start:])[0]
+    except json.JSONDecodeError:
+        pass
 
-{description}
+    # Repair missing closing braces by trying progressively shorter cuts.
+    # This handles truncated output where the model ran out of tokens.
+    text = raw[start:]
+    for end in range(len(text), start, -1):
+        candidate = text[:end]
+        open_braces = candidate.count("{") - candidate.count("}")
+        if open_braces < 0:
+            continue
+        candidate += "}" * open_braces
 
-Project name: {project_name}
-{language_instruction}
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
 
-Return ONLY valid JSON with this exact structure:
+    raise RuntimeError("Could not repair generated JSON.")
 
+def _default_run_command(language: str) -> str:
+    lang = (language or "").lower()
+    if lang in ("python", "py"):
+        return "python main.py"
+    if lang in ("javascript", "js", "node"):
+        return "node index.js"
+    if lang in ("typescript", "ts"):
+        return "npx ts-node index.ts"
+    if lang in ("go",):
+        return "go run ."
+    if lang in ("rust",):
+        return "cargo run"
+    if lang in ("java",):
+        return "java -jar target/app.jar"
+    if lang in ("csharp", "dotnet"):
+        return "dotnet run"
+    if lang in ("dart", "flutter"):
+        return "flutter run"
+    return "python main.py"
+
+
+def _default_test_command(language: str) -> str:
+    lang = (language or "").lower()
+    if lang in ("python", "py"):
+        return "pytest -q tests/"
+    if lang in ("javascript", "js", "typescript", "ts"):
+        return "npm test"
+    if lang in ("go",):
+        return "go test ./..."
+    if lang in ("rust",):
+        return "cargo test"
+    if lang in ("java",):
+        return "mvn test"
+    if lang in ("csharp", "dotnet"):
+        return "dotnet test"
+    if lang in ("dart", "flutter"):
+        return "flutter test"
+    return "pytest -q tests/"
+
+
+def _fallback_plan(description: str, project_name: str, language: str) -> dict:
+    """Return a minimal valid plan when the model output is unusable."""
+    lang = (language or "python").lower()
+    if lang in ("python", "py"):
+        main_code = (
+            "import pygame\n"
+            "import sys\n\n"
+            "def main():\n"
+            "    pygame.init()\n"
+            "    screen = pygame.display.set_mode((800, 600))\n"
+            "    pygame.display.set_caption('" + project_name + "')\n"
+            "    clock = pygame.time.Clock()\n"
+            "    running = True\n"
+            "    while running:\n"
+            "        for event in pygame.event.get():\n"
+            "            if event.type == pygame.QUIT:\n"
+            "                running = False\n"
+            "        screen.fill((0, 0, 0))\n"
+            "        pygame.display.flip()\n"
+            "        clock.tick(60)\n"
+            "    pygame.quit()\n"
+            "    sys.exit(0)\n\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        )
+        files = [
+            {"path": "main.py", "content": main_code, "description": "Game loop using pygame"},
+            {"path": "README.md", "content": f"# {project_name}\n\n{description}\n", "description": "Project readme"},
+        ]
+        run_cmd = "python main.py"
+        test_cmd = "pytest -q tests/"
+    else:
+        files = [
+            {"path": "README.md", "content": f"# {project_name}\n\n{description}\n", "description": "Project readme"},
+        ]
+        run_cmd = _default_run_command(lang)
+        test_cmd = _default_test_command(lang)
+
+    return {
+        "project_name": project_name,
+        "language": lang,
+        "files": files,
+        "tests": [],
+        "commands": {"run": run_cmd, "test": test_cmd},
+    }
+
+
+def _plan_project(description: str, language: str) -> dict:
+    prompt = f"""You are a senior software architect. Create a minimal, complete file plan for this project.
+
+Language: {language}
+Description: {description}
+
+Return ONLY valid JSON — no markdown, no explanation:
 {{
-  "language": "python|javascript|typescript|go|rust|java|csharp|dart|etc",
-  "project_type": "web|mobile|desktop|cli|library|api",
+  "project_name": "snake_case_name",
+  "entry_point": "main.py",
   "files": [
     {{
-      "path": "src/app.py",
-      "content": "...",
-      "description": "..."
+      "path": "main.py",
+      "description": "Entry point — what it does and which modules it imports",
+      "imports": []
     }}
   ],
-  "tests": [
-    {{
-      "path": "tests/test_app.py",
-      "content": "...",
-      "description": "..."
-    }}
-  ],
-  "dependencies": [
-    "package-or-library-names"
-  ],
-  "readme": "...",
-  "dockerfile": "...",
-  "ci_workflow": "...",
-  "commands": {{
-    "run": "python app.py",
-    "test": "pytest -q"
-  }}
+  "run_command": "python main.py",
+  "dependencies": [],
+  "tests": []
 }}
 
-RULES:
-- Use proper project structure for the chosen stack.
-- Include the correct dependency file: requirements.txt, package.json, go.mod, Cargo.toml, pom.xml, etc.
-- Generate real code, not placeholders.
-- Generate meaningful tests.
-- commands.test must be the exact command to run the test suite.
-- commands.run must be the exact command to run the project.
-- Return ONLY JSON.
+Critical:
+- Return ONLY valid JSON.
+- Keep it minimal.
+- If you cannot generate a complex game, still return a valid minimal pygame project.
+- Do NOT truncate the JSON. Ensure all braces are closed.
 """
-    response = router.generate(
-        prompt=prompt,
-        system="You are an expert software engineer. Return only valid JSON.",
-        temperature=0.2,
-        max_tokens=4000,
-    )
-    if not response.get("success"):
-        raise RuntimeError(response.get("error") or "Model router failed.")
 
-    raw = _extract_code(response["text"])
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise RuntimeError("Generated plan is not valid JSON.")
+    try:
+        raw = _cloud_generate(
+            prompt,
+            system="You are a software architect. Return only valid JSON.",
+            max_tokens=6000,
+        )
+        raw = _strip_fences(raw)
+    except Exception as e:
+        # Use fallback on any model failure
+        print(f"[DevAgent] Planner model failed: {e} — using fallback plan")
+        return _fallback_project_plan(description, language)
 
-    spec = json.loads(match.group(0))
+    # Try direct parse
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
 
-    required_keys = ("files", "commands")
-    for key in required_keys:
-        if key not in spec:
-            raise RuntimeError(f"Generated plan missing required key: {key}")
+    # Try repair missing closing braces
+    start = raw.find("{")
+    if start != -1:
+        text = raw[start:]
+        for end in range(len(text), 0, -1):
+            candidate = text[:end]
+            open_braces = candidate.count("{") - candidate.count("}")
+            if open_braces < 0:
+                continue
+            candidate += "}" * open_braces
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict) and "files" in data:
+                    return data
+            except Exception:
+                continue
 
-    return spec
+    print("[DevAgent] Could not repair planner JSON — using fallback plan")
+    return _fallback_project_plan(description, language)
 
 
 def _write_file(base_dir: Path, rel_path: str, content: str) -> None:

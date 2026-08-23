@@ -375,6 +375,8 @@ def assess_risk(capability: Capability, parameters: dict) -> tuple[bool, int, st
         params_risk = max(params_risk, 4)
     if name == "self_heal":
         params_risk = max(params_risk, 4)
+    if name == "dev_agent":
+        params_risk = min(params_risk, 2)
     if name == "system_management" and action in ("get_system_status", "status", "list", "info"):
         params_risk = 0
     if name == "system_management" and action in ("set_jarvis_feature", "set_power_plan"):
