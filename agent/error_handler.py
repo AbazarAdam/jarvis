@@ -54,6 +54,22 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
+def _call_cloud_llm(messages: list[dict], max_tokens: int = 1800) -> str:
+    """Use the stable central ModelRouter instead of deprecated Gemini SDK."""
+    from core.model_router import ModelRouter
+
+    response = ModelRouter().chat(
+        messages=messages,
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "Cloud model failed.")
+
+    return response["text"].strip()
+
+
 def analyze_error(
     step: dict,
     error: str,
@@ -78,23 +94,15 @@ def analyze_error(
             "user_message": str
         }
     """
-    import google.generativeai as genai
-
     if attempt >= max_attempts:
         print(f"[ErrorHandler] ⚠️ Max attempts reached for step {step.get('step')} — forcing replan")
         return {
-            "decision":      ErrorDecision.REPLAN,
-            "reason":        f"Failed {attempt} times: {error[:100]}",
+            "decision":       ErrorDecision.REPLAN,
+            "reason":         f"Failed {attempt} times: {error[:100]}",
             "fix_suggestion": "Try a completely different approach or tool",
-            "max_retries":   0,
-            "user_message":  "Trying a different approach, sir."
+            "max_retries":    0,
+            "user_message":   "Trying a different approach, sir."
         }
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite",
-        system_instruction=ERROR_ANALYST_PROMPT
-    )
 
     prompt = f"""Failed step:
 Tool: {step.get('tool')}
@@ -107,10 +115,14 @@ Error:
 
 Attempt number: {attempt}"""
 
+    messages = [
+        {"role": "system", "content": ERROR_ANALYST_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
     try:
-        response = model.generate_content(prompt)
-        text     = response.text.strip()
-        text     = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
+        text = _call_cloud_llm(messages, max_tokens=800)
+        text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
 
         result = json.loads(text)
         decision_str = result.get("decision", "replan").lower()
@@ -121,7 +133,6 @@ Attempt number: {attempt}"""
             "abort":  ErrorDecision.ABORT,
         }
         result["decision"] = decision_map.get(decision_str, ErrorDecision.REPLAN)
-
 
         if step.get("critical") and result["decision"] == ErrorDecision.SKIP:
             result["decision"]     = ErrorDecision.REPLAN
@@ -148,11 +159,6 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
 
     Returns a modified step dict.
     """
-    import google.generativeai as genai
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
-
     prompt = f"""A task step failed. Generate a replacement step.
 
 Original step:
@@ -166,9 +172,13 @@ Fix suggestion: {fix_suggestion}
 Write a Python script that accomplishes the same goal differently.
 Return ONLY the Python code, no explanation."""
 
+    messages = [
+        {"role": "system", "content": "You are an expert Python developer. Return only fixed code."},
+        {"role": "user", "content": prompt},
+    ]
+
     try:
-        response = model.generate_content(prompt)
-        code = response.text.strip()
+        code = _call_cloud_llm(messages, max_tokens=3000)
         code = re.sub(r"```(?:python)?", "", code).strip().rstrip("`").strip()
 
         return {

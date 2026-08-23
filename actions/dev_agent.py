@@ -69,9 +69,29 @@ def _get_api_key() -> str:
 
 
 def _get_model(model_name: str):
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel(model_name)
+    """Compatibility stub. Direct Gemini SDK usage has been removed."""
+    raise NotImplementedError("Use _llm_chat or _cloud_generate instead.")
+
+
+def _cloud_generate(
+    prompt: str,
+    system: str = "You are a senior software architect. Return only requested output.",
+    max_tokens: int = 3000,
+) -> str:
+    """Generate text using the stable central ModelRouter."""
+    from core.model_router import ModelRouter
+
+    response = ModelRouter().generate(
+        prompt=prompt,
+        system=system,
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "Cloud model failed.")
+
+    return response["text"].strip()
 
 
 def _strip_fences(text: str) -> str:
@@ -139,8 +159,6 @@ def _has_error(output: str, run_command: str) -> bool:
 
 
 def _plan_project(description: str, language: str) -> dict:
-    model = _get_model(MODEL_PLANNER)
-
     prompt = f"""You are a senior software architect. Create a minimal, complete file plan for this project.
 
 Language: {language}
@@ -178,15 +196,15 @@ Critical rules:
 JSON:"""
 
     try:
-        response = model.generate_content(prompt)
-        raw = _strip_fences(response.text)
+        raw = _strip_fences(_cloud_generate(prompt))
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Planner returned invalid JSON: {e}\nRaw: {response.text[:300]}")
+        raise ValueError(f"Planner returned invalid JSON: {e}\nRaw: {raw[:300]}")
     except Exception as e:
         if _is_rate_limit(e):
             raise RateLimitError(str(e))
         raise
+
 
 def _llm_chat(
     prompt: str,
@@ -194,33 +212,20 @@ def _llm_chat(
     temperature: float = 0.2,
     max_tokens: int = 4096,
 ) -> str:
-    """
-    Use Groq as primary, then OpenRouter, then Gemini.
-    Keeps development fast and avoids Gemini free‑tier exhaustion.
-    """
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": prompt},
-    ]
+    """Use the stable central ModelRouter for all code generation."""
+    from core.model_router import ModelRouter
 
-    # 1. Groq
-    try:
-        from groq_client import groq_client
-        return groq_client.chat(messages, temperature=temperature, max_tokens=max_tokens)
-    except Exception as e:
-        print(f"[DevAgent] Groq unavailable, trying OpenRouter: {e}")
+    response = ModelRouter().generate(
+        prompt=prompt,
+        system=system,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
 
-    # 2. OpenRouter
-    try:
-        from or_client import client
-        return client.multi_turn(messages, temperature=temperature, max_tokens=max_tokens)
-    except Exception as e:
-        print(f"[DevAgent] OpenRouter unavailable, falling back to Gemini: {e}")
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "Cloud model failed.")
 
-    # 3. Gemini
-    model = _get_model(MODEL_PLANNER)
-    response = model.generate_content(prompt)
-    return response.text.strip()
+    return response["text"].strip()
 
 
 def _write_file(
