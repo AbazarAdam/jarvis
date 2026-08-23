@@ -1718,13 +1718,6 @@ class JarvisLive:
                     self._ready_for_text = True
                     self._stop_background_event.clear()
                     self._hard_reset_event.clear()
-
-                    # Force JARVIS back to live microphone listening.
-                    # If the UI was muted before STOP, this ensures it is
-                    # unmuted for the new session.
-                    self.ui.muted = False
-                    self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: Microphone active.")
                     self._stop_background_event.clear()
 
             except HardResetException:

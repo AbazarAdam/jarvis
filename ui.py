@@ -889,12 +889,16 @@ class MainWindow(QMainWindow):
             self._apply_state("LISTENING")
 
     def reset_complete(self):
+        """Re-enable STOP button and restore online/listening without forcing unmute."""
         self._interrupt_btn.setEnabled(True)
-        self._muted = False
-        self.hud.muted = False
         self._style_mute_btn()
-        self._apply_state("LISTENING")
-        self._log.append_log("SYS: Microphone active.")
+
+        if not self._muted:
+            self._apply_state("LISTENING")
+            self._log.append_log("SYS: Microphone active.")
+        else:
+            self._apply_state("MUTED")
+            self._log.append_log("SYS: Microphone muted.")
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -953,9 +957,9 @@ class MainWindow(QMainWindow):
         if not self._ready:
             self._show_setup()
 
-        sc_mute = QShortcut(QKeySequence("F4"), self)
+        sc_mute = QShortcut(QKeySequence("Shift+M"), self)
         sc_mute.activated.connect(self._toggle_mute)
-        sc_full = QShortcut(QKeySequence("F11"), self)
+        sc_full = QShortcut(QKeySequence("F"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
 
     # ------------------------------------------------------------------
