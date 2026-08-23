@@ -186,6 +186,25 @@ class _SysMetrics:
 _metrics = _SysMetrics()
 
 
+class CommandInput(QTextEdit):
+    """Multi-line command input.
+
+    Enter sends the message. Shift+Enter inserts a new line.
+    """
+
+    submitted = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Allow new line
+                super().keyPressEvent(event)
+            else:
+                self.submitted.emit()
+                event.accept()
+        else:
+            super().keyPressEvent(event)
+
 class HudCanvas(QWidget):
     def __init__(self, face_path: str, parent=None):
         super().__init__(parent)
@@ -1094,22 +1113,33 @@ class MainWindow(QMainWindow):
 
     def _build_bottom_bar(self):
         w = QWidget()
-        w.setFixedHeight(_BOTTOM_H)
+        w.setMinimumHeight(56)
+        w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         w.setStyleSheet(f"background: rgba(10, 16, 28, 0.72); border: 1px solid {C.BORDER}; border-radius: 16px;")
         _add_shadow(w, radius=28, alpha=70, offset=(0, 6))
 
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(16, 8, 16, 8)
-        lay.setSpacing(10)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(8)
 
-        self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
+        self._input = CommandInput()
+        self._input.setPlaceholderText("Type a command or question…  (Shift+Enter for new line)")
         self._input.setFont(QFont("Segoe UI", 9))
+        self._input.setMinimumHeight(40)
+        self._input.setMaximumHeight(120)
+        self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._input.setStyleSheet(f"""
-            QLineEdit {{ background: #0A101C; color: {C.WHITE}; border: 1px solid {C.BORDER}; border-radius: 6px; padding: 5px 10px; }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            QTextEdit {{
+                background: #0A101C;
+                color: {C.WHITE};
+                border: 1px solid {C.BORDER};
+                border-radius: 6px;
+                padding: 6px 8px;
+            }}
+            QTextEdit:focus {{ border: 1px solid {C.PRI}; }}
         """)
-        self._input.returnPressed.connect(self._send)
+        self._input.textChanged.connect(self._adjust_input_height)
+        self._input.submitted.connect(self._send)
         lay.addWidget(self._input, 1)
 
         send = QPushButton("▸")
@@ -1155,6 +1185,16 @@ class MainWindow(QMainWindow):
 
         return w
 
+    def _adjust_input_height(self):
+        doc_height = self._input.document().size().height()
+        new_height = int(doc_height) + 16
+        new_height = max(40, min(140, new_height))
+        if new_height != self._input.height():
+            self._input.setFixedHeight(new_height)
+            self._input.updateGeometry()
+            parent = self._input.parentWidget()
+            if parent:
+                parent.updateGeometry()
 
     # ------------------------------------------------------------------
     # TOGGLE AND UI STATE
@@ -1311,7 +1351,7 @@ class MainWindow(QMainWindow):
             """)
 
     def _send(self):
-        txt = self._input.text().strip()
+        txt = self._input.toPlainText().strip()
         if not txt: return
         self._input.clear()
         self._log.append_log(f"You: {txt}")
