@@ -57,18 +57,19 @@ def _log_and_speak():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     msg = f"[{timestamp}] UNHANDLED EXCEPTION\n{tb}\n"
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(msg)
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(msg)
+    except OSError as e:
+        print(f"[ErrorHandler] Cannot write crash log: {e}")
 
-    # Show in the UI log
     if _write_log_callback:
         try:
             _write_log_callback("ERR: Internal error. See logs/crash.log")
         except Exception:
             pass
 
-    # Speak to the user
     if _speak_callback:
         try:
             _speak_callback(

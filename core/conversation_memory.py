@@ -104,14 +104,17 @@ class WorkingMemory:
 
     def save_checkpoint(self, summary: str = "", last_task: str = "") -> None:
         """Persist a small session checkpoint to disk."""
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        data = {
-            "summary": summary or "",
-            "last_task": last_task or "",
-            "saved_at": datetime.now().isoformat(timespec="seconds"),
-            "recent_turns_count": len(self.get_recent_turns()),
-        }
-        SESSION_CHECKPOINT.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+            data = {
+                "summary": summary or "",
+                "last_task": last_task or "",
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+                "recent_turns_count": len(self.get_recent_turns()),
+            }
+            SESSION_CHECKPOINT.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as e:
+            print(f"[Memory] Cannot save session checkpoint: {e}")
 
     def load_checkpoint(self) -> dict[str, str]:
         if not SESSION_CHECKPOINT.exists():
