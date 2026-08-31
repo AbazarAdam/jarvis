@@ -18,7 +18,9 @@ BASE_DIR     = _get_base_dir()
 API_KEY_PATH = BASE_DIR / "config" / "api_keys.json"
 
 GROQ_MODELS = [
+    "llama-3.1-8b-instant",
     "llama-3.3-70b-versatile",
+    "gemma2-9b-it",
 ]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 

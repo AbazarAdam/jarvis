@@ -838,6 +838,169 @@ class SetupOverlay(QWidget):
         self.done.emit(key, or_key, self._sel_os)
 
 
+class StopwatchWindow(QWidget):
+    """Floating stopwatch window with interactive controls."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("JARVIS Stopwatch")
+        self.setFixedSize(260, 160)
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setStyleSheet(f"background: {C.BG}; border: 2px solid {C.PRI}; border-radius: 12px;")
+
+        # Internal state
+        self._elapsed = 0.0
+        self._start_time = None
+        self._running = False
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.setInterval(100)
+
+        # Callback to plugin (set from outside)
+        self.command_callback = None
+
+        # Layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        # Time display
+        self.display = QLabel("00:00.0")
+        self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.display.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        self.display.setStyleSheet(f"color: {C.WHITE}; background: transparent; border: none;")
+        layout.addWidget(self.display)
+
+        # Button row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.start_btn = QPushButton("▶ Start")
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_btn.clicked.connect(self._toggle_start_pause)
+
+        self.reset_btn = QPushButton("⟲ Reset")
+        self.reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reset_btn.clicked.connect(self._reset)
+
+        self.stop_btn = QPushButton("⏹ Stop")
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.clicked.connect(self._stop)
+
+        self._style_buttons()
+
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.reset_btn)
+        btn_row.addWidget(self.stop_btn)
+        layout.addLayout(btn_row)
+
+        # Hide on close instead of destroying
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+
+    def _style_buttons(self):
+        """Apply consistent styling to all buttons."""
+        style = f"""
+            QPushButton {{
+                background: {C.PANEL2};
+                color: {C.TEXT};
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        """
+        for btn in [self.start_btn, self.reset_btn, self.stop_btn]:
+            btn.setStyleSheet(style)
+
+    def _toggle_start_pause(self):
+        """Called when Start/Pause button is clicked."""
+        if self._running:
+            self._pause()
+        else:
+            self._start()
+
+    def _start(self):
+        if not self._running:
+            self._start_time = time.monotonic() - self._elapsed
+            self._running = True
+            self._timer.start()
+            self.start_btn.setText("⏸ Pause")
+            # Notify plugin
+            if self.command_callback:
+                self.command_callback("start")
+
+    def _pause(self):
+        if self._running:
+            self._elapsed = time.monotonic() - self._start_time
+            self._running = False
+            self._timer.stop()
+            self.start_btn.setText("▶ Resume")
+            # Notify plugin
+            if self.command_callback:
+                self.command_callback("stop")
+
+    def _reset(self):
+        self._elapsed = 0.0
+        if self._running:
+            self._start_time = time.monotonic()
+        self._update_display()
+        # Notify plugin
+        if self.command_callback:
+            self.command_callback("reset")
+
+    def _stop(self):
+        """Stop and close the window."""
+        if self._running:
+            self._elapsed = time.monotonic() - self._start_time
+            self._running = False
+        self._timer.stop()
+        self.hide()
+        # Notify plugin
+        if self.command_callback:
+            self.command_callback("reset")
+
+    def _tick(self):
+        if self._running:
+            self._elapsed = time.monotonic() - self._start_time
+        self._update_display()
+
+    def _update_display(self):
+        total_seconds = int(self._elapsed)
+        hours, rem = divmod(total_seconds, 3600)
+        mins, secs = divmod(rem, 60)
+        tenths = int((self._elapsed - total_seconds) * 10)
+        if hours > 0:
+            text = f"{hours:02d}:{mins:02d}:{secs:02d}.{tenths}"
+        else:
+            text = f"{mins:02d}:{secs:02d}.{tenths}"
+        self.display.setText(text)
+
+    # Public method for external updates (from plugin via signal)
+    def update_state(self, elapsed: float, running: bool):
+        self._elapsed = elapsed
+        self._running = running
+        if running:
+            self._start_time = time.monotonic() - elapsed
+            self._timer.start()
+            self.start_btn.setText("⏸ Pause")
+        else:
+            self._timer.stop()
+            self.start_btn.setText("▶ Start")
+        self._update_display()
+
+    def closeEvent(self, event):
+        """Override close to hide instead of destroy."""
+        event.ignore()
+        self._stop()
+
+
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _camera_preview_signal = pyqtSignal(bytes)
@@ -847,6 +1010,25 @@ class MainWindow(QMainWindow):
     _remote_stop_signal = pyqtSignal()
     _proactive_toggle_signal = pyqtSignal(bool)
     _qr_signal = pyqtSignal(bytes, str, str)
+    _stopwatch_show_signal = pyqtSignal(object)   # callback function from plugin
+    _stopwatch_update_signal = pyqtSignal(float, bool)
+    _stopwatch_close_signal = pyqtSignal()
+
+    def _show_stopwatch_window(self, callback):
+        if not hasattr(self, '_stopwatch_window') or self._stopwatch_window is None:
+            self._stopwatch_window = StopwatchWindow(self)
+            self._stopwatch_window.command_callback = callback
+        self._stopwatch_window.show()
+        self._stopwatch_window.raise_()
+
+    def _update_stopwatch_window(self, elapsed, running):
+        if hasattr(self, '_stopwatch_window') and self._stopwatch_window is not None:
+            self._stopwatch_window.update_state(elapsed, running)
+
+    def _close_stopwatch_window(self):
+        if hasattr(self, '_stopwatch_window') and self._stopwatch_window is not None:
+            self._stopwatch_window.hide()
+
 
     def show_qr_code(self, qr_buf: io.BytesIO, url: str, password: str = ""):
         self._qr_signal.emit(qr_buf.getvalue(), url, password)
@@ -951,6 +1133,10 @@ class MainWindow(QMainWindow):
         self._state_sig.connect(self._apply_state)
         self._camera_preview_signal.connect(self._show_camera_preview_dialog)
         self._setup_sig.connect(self._update_setup_progress)
+
+        self._stopwatch_show_signal.connect(self._show_stopwatch_window)
+        self._stopwatch_update_signal.connect(self._update_stopwatch_window)
+        self._stopwatch_close_signal.connect(self._close_stopwatch_window)
 
         self._overlay = None
         self._ready = self._check_config()
@@ -1470,6 +1656,15 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def show_stopwatch(self, callback):
+        self._win._stopwatch_show_signal.emit(callback)
+
+    def update_stopwatch(self, elapsed: float, running: bool):
+        self._win._stopwatch_update_signal.emit(elapsed, running)
+
+    def close_stopwatch(self):
+        self._win._stopwatch_close_signal.emit()
 
     def wait_for_api_key(self):
         while not self._win._ready:

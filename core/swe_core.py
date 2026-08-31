@@ -163,20 +163,6 @@ def _normalise_language(language: str | None) -> str:
     }
     return aliases.get(lang, lang)
 
-def _provider_available() -> bool:
-    """Return True if at least one cloud AI provider can answer a simple prompt."""
-    try:
-        from core.model_router import ModelRouter
-
-        r = ModelRouter().generate(
-            prompt="Reply with OK",
-            system="Reply with OK only.",
-            temperature=0,
-            max_tokens=10,
-        )
-        return bool(r.get("success") and r.get("text", "").strip())
-    except Exception:
-        return False
 
 def _detect_project_type(description: str) -> str:
     text = description.lower()
@@ -687,15 +673,17 @@ Rules:
 
 def generate_software_project(requirement: ProjectRequirement, speak=None, player=None) -> str:
     """Full software generation pipeline."""
-
-    # Preflight: refuse to start if no AI provider is available.
-    if not _provider_available():
-        msg = (
-            "No AI provider is currently available, sir. "
-            "Free API quotas may be exhausted. Please wait and try again."
+    # Log provider health without blocking generation
+    try:
+        from core.model_router import ModelRouter
+        health = ModelRouter().chat(
+            [{"role": "user", "content": "Reply with OK"}],
+            max_tokens=5,
+            temperature=0,
         )
-        print(f"[SWE] ❌ {msg}")
-        return msg
+        print(f"[SWE] Provider health: {health.get('provider', 'unknown')} -> {health.get('success', False)}")
+    except Exception:
+        print("[SWE] Provider health check failed, continuing anyway.")
 
     if _swe_cancel_event.is_set():
         print("[SWE] ❌ Cancelled before start.")

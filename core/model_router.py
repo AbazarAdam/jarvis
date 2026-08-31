@@ -87,7 +87,7 @@ class ModelRouter:
 
         self._gemini_model = "gemini-2.5-flash"
         self._openrouter_model = "nvidia/nemotron-3-nano-30b-a3b:free"
-        self._groq_model = "llama-3.3-70b-versatile"
+        self._groq_model = "llama-3.1-8b-instant"
         self._last_openrouter_model: Optional[str] = None
 
     # ------------------------------------------------------------------
