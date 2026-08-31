@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,19 @@ MAX_RETRIES = 3
 MAX_FIX_ATTEMPTS = 4
 BUILD_TIMEOUT = 60
 
+
+# Global cancellation flag for background SWE tasks
+_swe_cancel_event = threading.Event()
+
+
+def request_swe_cancel():
+    """Request cancellation of any running background software generation."""
+    _swe_cancel_event.set()
+
+
+def clear_swe_cancel():
+    """Clear the SWE cancellation flag for future tasks."""
+    _swe_cancel_event.clear()
 
 LANGUAGE_SPECS: dict[str, dict[str, Any]] = {
     "python": {
@@ -447,6 +461,10 @@ def _write_project_files(project_dir: Path, files: list[dict], requirement: Proj
         if not path:
             continue
 
+        if _swe_cancel_event.is_set():
+            print(f"[SWE] ❌ Cancelled during file generation: {path}")
+            break
+
         prompt = f"""Write complete, functional code for this file.
 
 Project: {requirement.description}
@@ -678,6 +696,10 @@ def generate_software_project(requirement: ProjectRequirement, speak=None, playe
         )
         print(f"[SWE] ❌ {msg}")
         return msg
+
+    if _swe_cancel_event.is_set():
+        print("[SWE] ❌ Cancelled before start.")
+        return "Cancelled by user, sir."
 
     project_dir = PROJECTS_DIR / requirement.name
     project_dir.mkdir(parents=True, exist_ok=True)

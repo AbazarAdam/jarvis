@@ -35,7 +35,7 @@ from core.episodic_memory import EpisodicMemory
 from core.workflow_scheduler import WorkflowScheduler
 from core.self_evaluation import SelfEvaluator
 from core.reset_controller import reset_controller
-
+from core.swe_core import request_swe_cancel, clear_swe_cancel
 
 from actions.file_processor import file_processor
 from actions.open_app          import open_app
@@ -686,9 +686,6 @@ class JarvisLive:
         # True only for the reconnect immediately after STOP
         self._was_hard_reset = False
 
-        # Tracks whether the next online event is after a hard reset
-        self._was_hard_reset = False
-
         # Hard reset support
         self._hard_reset_event = threading.Event()
         self._hard_reset_triggered = False
@@ -801,15 +798,9 @@ class JarvisLive:
         )
 
     def _announce_local(self, text: str = ""):
-        """Play a short beep when a background task completes."""
-        def _run():
-            try:
-                import winsound
-                winsound.Beep(1000, 200)
-                winsound.Beep(1200, 200)
-            except Exception:
-                pass
-        threading.Thread(target=_run, daemon=True).start()
+        """Speak the completion/failure message through JARVIS voice."""
+        if text:
+            self.speak(text)
 
     def _start_background_tool(self, tool_name: str, args: dict, func) -> str:
         task_id = uuid.uuid4().hex[:8]
@@ -855,6 +846,67 @@ class JarvisLive:
         thread.start()
         return task_id
 
+    def _start_background_tool_with_speak(
+        self,
+        tool_name: str,
+        args: dict,
+        func,
+        start_message: str = "",
+    ) -> str:
+        """
+        Start a heavy tool in a background thread with real spoken start,
+        completion, and failure notifications.
+        """
+        task_id = uuid.uuid4().hex[:8]
+        self.background_tasks[task_id] = {
+            "tool": tool_name,
+            "status": "running",
+            "result": None,
+        }
+
+        if start_message:
+            self.speak(start_message)
+
+        def wrapper():
+            try:
+                result = func(parameters=args, player=self.ui, speak=self.speak)
+                task = self.background_tasks.get(task_id)
+                if task:
+                    task["status"] = "completed"
+                    task["result"] = result
+
+                self.speak(f"{tool_name} completed, sir.")
+                self.reflection.record(
+                    goal=tool_name,
+                    result=str(result)[:200],
+                    outcome="success",
+                    tool=tool_name,
+                )
+                self._maybe_evaluate_task(tool_name, args, str(result)[:200], "success")
+
+            except Exception as e:
+                task = self.background_tasks.get(task_id)
+                if task:
+                    task["status"] = "failed"
+                    task["result"] = str(e)
+
+                self.speak(f"{tool_name} failed, sir. {str(e)[:120]}")
+                self.reflection.record(
+                    goal=tool_name,
+                    result="",
+                    outcome="failure",
+                    error=str(e),
+                    tool=tool_name,
+                )
+                self._maybe_evaluate_task(tool_name, args, "", "failure", error=str(e))
+                from core.audit import log_action
+                log_action(tool_name, args, result=str(e), status="failed")
+
+        thread = threading.Thread(target=wrapper, daemon=True)
+        self._background_threads[task_id] = thread
+        thread.start()
+        return task_id
+
     def cancel_all_background_tasks(self):
         """Signal all background tasks to stop without corrupting active threads."""
         self._stop_background_event.set()
@@ -876,6 +928,7 @@ class JarvisLive:
         # Threads are daemon; clear only our thread map.
         self._background_threads.clear()
 
+        request_swe_cancel()
 
     def _kill_child_processes(self):
         """
@@ -1194,6 +1247,37 @@ class JarvisLive:
                     )
                 # status/rollback are quick, run synchronously below
 
+            # Heavy software projects must run in the background.
+            if name == "project_builder":
+                from plugins.project_builder import execute as pb_execute
+
+                self._start_background_tool_with_speak(
+                    "project_builder",
+                    args,
+                    pb_execute,
+                    start_message=f"Building project, sir. This will run in the background.",
+                )
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={"result": "Background task started. Do not speak until the user asks for status."},
+                )
+
+            elif name == "dev_agent":
+                from actions.dev_agent import dev_agent as da
+
+                self._start_background_tool_with_speak(
+                    "dev_agent",
+                    args,
+                    da,
+                    start_message=f"Building project, sir. This will run in the background.",
+                )
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={"result": "Background task started. Do not speak until the user asks for status."},
+                )
+
             # Plugin dispatch (all other plugins and quick security_tool_manager actions)
             if name in PLUGIN_FUNCTIONS:
                 plugin_fn = PLUGIN_FUNCTIONS[name]
@@ -1313,17 +1397,6 @@ class JarvisLive:
             elif name == "code_helper":
                 r = await self._run_cancellable(lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
-
-            elif name == "dev_agent":
-                from actions.dev_agent import dev_agent as da
-                self._start_background_tool("dev_agent", args, da)
-                self._announce_local(
-                    "Development agent started in background, sir. I will notify you when complete."
-                )
-                return types.FunctionResponse(
-                    id=fc.id, name=name,
-                    response={"result": "ok", "silent": True}
-                )
 
 
             elif name == "agent_task":
@@ -1718,9 +1791,7 @@ class JarvisLive:
                                 break
                     tg.create_task(_heartbeat())
 
-                    # Prime the live session after STOP so voice works immediately.
-                    # Without this, Gemini Live sometimes waits for a text turn
-                    # before accepting audio again.
+                    # Prime the live session after STOP so voice works immediately
                     if self._was_hard_reset:
                         self._was_hard_reset = False
                         try:
@@ -1732,33 +1803,17 @@ class JarvisLive:
                         except Exception as e:
                             print(f"[JARVIS] ⚠️ Prime turn failed: {e}")
 
-                    # Prime the live session after a hard reset so audio works immediately
-                    if self._was_hard_reset:
-                        self._was_hard_reset = False
-                        try:
-                            await session.send_client_content(
-                                turns={"parts": [{"text": "JARVIS online, sir."}]},
-                                turn_complete=True,
-                            )
-                        except Exception as e:
-                            print(f"[JARVIS] ⚠️ Prime turn failed: {e}")
-
                     self.ui.reset_complete()
                     self._ready_for_text = True
                     self._stop_background_event.clear()
                     self._hard_reset_event.clear()
+                    clear_swe_cancel()
                     self._stop_background_event.clear()
-
-            except HardResetException:
-                print("[JARVIS] Hard reset requested. Reconnecting...")
-                self._hard_reset_event.clear()   # allow next session to start clean
-                # Continue to the common cleanup below
 
             except HardResetException:
                 print("[JARVIS] Hard reset requested. Reconnecting...")
                 self._hard_reset_event.clear()
                 self._hard_reset_triggered = False
-                # Continue to the common cleanup below
 
             except BaseExceptionGroup as eg:
                 # TaskGroup can wrap the HardResetException into a BaseExceptionGroup
