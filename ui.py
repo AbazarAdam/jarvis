@@ -195,6 +195,16 @@ class CommandInput(QTextEdit):
     submitted = pyqtSignal()
 
     def keyPressEvent(self, event):
+        # Ctrl+Shift+V: paste plain text only
+        if (event.key() == Qt.Key.Key_V and
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier and
+            event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            clipboard = QApplication.clipboard()
+            text = clipboard.text()
+            self.insertPlainText(text)
+            event.accept()
+            return
+
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 # Allow new line
@@ -1293,12 +1303,6 @@ class MainWindow(QMainWindow):
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
-        self._file_hint = QLabel("No file loaded")
-        self._file_hint.setFont(QFont("Segoe UI", 8))
-        self._file_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        self._file_hint.setWordWrap(True)
-        lay.addWidget(self._file_hint)
-
         return w
 
     def _build_bottom_bar(self):
@@ -1512,7 +1516,6 @@ class MainWindow(QMainWindow):
     def _on_file_selected(self, path: str):
         self._current_file = path
         p = Path(path); cat = _file_category(p); icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"]); size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon} {p.name} · {size} · Tell JARVIS what to do")
         self._log.append_log(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = f"[FILE_UPLOADED] path={path} | name={p.name} | type={p.suffix.lstrip('.')} | size={size} | Briefly tell the user you can see the file '{p.name}' ({size}) has been uploaded and ask what they'd like to do with it."

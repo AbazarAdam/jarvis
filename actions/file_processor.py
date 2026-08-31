@@ -25,7 +25,9 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 import subprocess, sys
-
+import pytesseract
+import fitz  # PyMuPDF
+from PIL import Image
 
 from google import genai as _google_genai
 
@@ -211,6 +213,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
 
     return _process_image(path, "describe", {"instruction": f"{action}: {params}"})
 
+
 def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "summarize"
 
@@ -232,10 +235,53 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                 return ""
         return text[:max_chars]
 
+    def _ocr_pdf() -> str:
+        """Render each PDF page to image and run Tesseract OCR."""
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return "PyMuPDF is not installed. Run: pip install PyMuPDF"
+
+        try:
+            import pytesseract
+            import os
+
+            # Set Tesseract path fallback for Windows
+            tesseract_candidates = [
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            ]
+            for tesseract_path in tesseract_candidates:
+                if os.path.exists(tesseract_path):
+                    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                    break
+        except ImportError:
+            return "pytesseract is not installed. Run: pip install pytesseract"
+
+        try:
+            doc = fitz.open(path)
+            full_text = []
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(dpi=200)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                text = pytesseract.image_to_string(img)
+                full_text.append(text)
+            return "\n".join(full_text)
+        except Exception as e:
+            return f"OCR failed: {e}"
+
     if action in ("summarize", "extract_text", "translate_hint", "analyze", "reformat"):
         text = _extract_pdf_text()
         if not text.strip():
-            return "Could not extract text from PDF (may be scanned/image-based)."
+            # Try OCR fallback
+            ocr_text = _ocr_pdf()
+            if ocr_text.startswith(("PyMuPDF", "pytesseract", "OCR failed")):
+                return f"Could not extract text from PDF. {ocr_text}"
+            text = ocr_text
+
+        if not text.strip():
+            return "Could not extract text from PDF (may be scanned/image-based and OCR unavailable)."
 
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
@@ -271,6 +317,10 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
 
     if action == "to_word":
         text = _extract_pdf_text()
+        if not text:
+            text = _ocr_pdf()
+            if text.startswith(("PyMuPDF", "pytesseract", "OCR failed")):
+                return f"Could not extract text to convert. {text}"
         if not text:
             return "Could not extract text to convert."
         try:
