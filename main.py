@@ -679,6 +679,10 @@ class JarvisLive:
         self.episodic_memory = EpisodicMemory()
         self.self_evaluator = SelfEvaluator()
 
+        # Turn-level confirmation guard: prevents JARVIS from self-confirming
+        # a dangerous action in the same model turn.
+        self._pending_confirmation_key: str | None = None
+
         # True only for the reconnect immediately after STOP
         self._was_hard_reset = False
 
@@ -1078,6 +1082,22 @@ class JarvisLive:
         log_action(name, args, status="started")
 
         # ------------------------------------------------------------------
+        # CONFIRMATION GUARD
+        # ------------------------------------------------------------------
+        action_value = str(args.get("action", "")).lower()
+        guard_key = f"{name}:{action_value}"
+
+        # If this exact tool/action already requested confirmation earlier in
+        # this same turn, block any automatic retry, even with confirmed=yes.
+        if self._pending_confirmation_key == guard_key:
+            self.speak("Please confirm first, sir.")
+            return types.FunctionResponse(
+                id=fc.id,
+                name=name,
+                response={"result": "Waiting for user confirmation."},
+            )
+
+        # ------------------------------------------------------------------
         # CORTEX + SAFETY PREFLIGHT
         # ------------------------------------------------------------------
         try:
@@ -1100,6 +1120,11 @@ class JarvisLive:
             if not guard_decision.get("allowed"):
                 reason = guard_decision.get("reason", "Blocked by execution guard.")
                 log_action(name, args, result=f"Blocked: {reason}", status="blocked")
+
+                # Set confirmation guard key
+                action_value = str(args.get("action", "")).lower()
+                self._pending_confirmation_key = f"{name}:{action_value}"
+
                 self.speak_error(name, reason)
                 return types.FunctionResponse(
                     id=fc.id,
@@ -1138,6 +1163,8 @@ class JarvisLive:
         if action_value in dangerous_actions:
             confirmed = str(args.get("confirmed", "")).lower()
             if confirmed not in ("yes", "true", "1", "confirm"):
+                guard_key = f"{name}:{action_value}"
+                self._pending_confirmation_key = guard_key
                 log_action(name, args, result="Blocked: confirmation required", status="blocked")
                 self.speak(
                     f"This action requires confirmation, sir. "
@@ -1516,6 +1543,8 @@ class JarvisLive:
                         if sc.turn_complete:
                             print(f"[JARVIS] turn_complete: in_buf_len={len(in_buf)} out_buf_len={len(out_buf)}")
                             self.set_speaking(False)
+
+                            self._pending_confirmation_key = None
 
                             full_in = self._clean_transcript(" ".join(in_buf))
                             if full_in:

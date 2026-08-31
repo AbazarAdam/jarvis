@@ -26,6 +26,7 @@ import re
 import time
 from pathlib import Path
 from datetime import datetime
+from core.action_history import record_action
 
 
 def get_base_dir():
@@ -210,7 +211,14 @@ def _line_edit(path: Path, line_start: int, line_end: int, new_content: str) -> 
     end = min(len(lines), int(line_end))
     new_lines = new_content.splitlines()
     updated = lines[:start] + new_lines + lines[end:]
-    _save_file(path, "\n".join(updated))
+    updated_code = "\n".join(updated)
+    record_action(
+        action="edit",
+        file_path=str(path),
+        original_content=content,
+        new_content=updated_code,
+    )
+    _save_file(path, updated_code)
     _log(f"Line edit {line_start}-{line_end} on {path}")
     return f"Edited {path} lines {line_start}-{line_end}."
 
@@ -252,7 +260,16 @@ Updated code:"""
     except Exception as e:
         return f"Could not edit code: {e}"
 
-    status = _save_file(Path(file_path), edited)
+    target_path = Path(file_path)
+    original = content
+    record_action(
+        action="edit",
+        file_path=str(target_path),
+        original_content=original,
+        new_content=edited,
+    )
+
+    status = _save_file(target_path, edited)
     _log(f"Edited file: {file_path}")
     return f"File edited. {status}\n\nPreview:\n{_preview(edited)}"
 

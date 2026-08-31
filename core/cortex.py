@@ -69,7 +69,7 @@ RISK_RULES = {
     "file_processor": 2,
     "computer_settings": 2,
     "computer_control": 2,
-    "code_helper": 3,
+    "code_helper": 2,
     "dev_agent": 3,
     "agent_task": 2,
     "security_mode": 4,
@@ -87,6 +87,7 @@ RISK_RULES = {
     "learning_mode": 1,
     "system_management": 1,
     "codebase_insight": 0,
+    "undo": 1,
 }
 
 
@@ -383,6 +384,10 @@ def assess_risk(capability: Capability, parameters: dict) -> tuple[bool, int, st
         params_risk = max(params_risk, 2)
     if name == "git_plugin" and action in ("status", "diff", "log", "branch"):
         params_risk = 0
+    if name == "git_plugin" and action in ("restore", "reset", "clean", "checkout"):
+        params_risk = max(params_risk, 4)
+    if name == "undo" and action in ("undo", "undo_file", "list"):
+        params_risk = min(params_risk, 1)
 
     if params_risk < 3:
         return True, params_risk, "Allowed."

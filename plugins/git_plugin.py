@@ -25,7 +25,8 @@ PLUGIN_INFO = {
     "description": (
         "Manage Git source control for any repository. Use repo_path to target a specific project folder. "
         "If no repo_path is given, use the JARVIS project folder. "
-        "Supports: status, diff, log, branches, commit, push, pull, merge, pull requests, and project discovery."
+        "Supports: status, diff, log, branches, commit, push, pull, merge, pull requests, project discovery, "
+        "and safe rollback actions: restore, reset, clean, checkout. Destructive rollback actions require confirmed='yes'."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -61,6 +62,14 @@ PLUGIN_INFO = {
             "repo_path": {
                 "type": "STRING",
                 "description": "Full path to the Git repository. Use this to operate on any project, e.g. C:\\Users\\abaze\\Desktop\\JarvisProjects\\flask_demo"
+            },
+            "file_path": {
+                "type": "STRING",
+                "description": "Optional file path for restore action"
+            },
+            "confirmed": {
+                "type": "STRING",
+                "description": "Set to 'yes' to confirm destructive actions like restore, reset, clean, or checkout"
             }
         },
         "required": ["action"]
@@ -241,6 +250,40 @@ def _create_pr(repo_path: str, base: str, head: str, title: str, body: str) -> s
         return f"PR creation error: {e}"
 
 
+def _git_restore(repo_path: str, file_path: str | None = None) -> str:
+    args = ["restore"]
+    if file_path:
+        args.append(file_path)
+    else:
+        args.append(".")
+    code, out, err = _run_git(args, repo_path)
+    if code == 0:
+        return out or err or "Restored successfully."
+    return err or out or "Restore failed."
+
+
+def _git_reset_hard(repo_path: str) -> str:
+    code, out, err = _run_git(["reset", "--hard", "HEAD"], repo_path)
+    if code == 0:
+        return "Reset to HEAD successful."
+    return err or out or "Reset failed."
+
+
+def _git_clean(repo_path: str) -> str:
+    code, out, err = _run_git(["clean", "-fd"], repo_path)
+    if code == 0:
+        return "Cleaned untracked files."
+    return err or out or "Clean failed."
+
+
+def _git_checkout(repo_path: str, branch_name: str) -> str:
+    if not branch_name:
+        return "Please provide a branch name."
+    code, out, err = _run_git(["checkout", branch_name], repo_path)
+    if code == 0:
+        return f"Checked out branch '{branch_name}'."
+    return err or out or "Checkout failed."
+
 def execute(parameters: dict, player=None, speak=None) -> str:
     action = (parameters or {}).get("action", "").lower().strip()
     repo_path = parameters.get("repo_path") or str(BASE_DIR)
@@ -279,5 +322,31 @@ def execute(parameters: dict, player=None, speak=None) -> str:
         return _git_remote_url(repo_path)
     elif action == "create_pr":
         return _create_pr(repo_path, base_branch, head_branch, title, body)
+
+    elif action == "restore":
+        confirmed = str(parameters.get("confirmed", "")).lower()
+        if confirmed not in ("yes", "true", "1", "confirm"):
+            return "Confirmation required for git restore, sir."
+        file_path = parameters.get("file_path", "").strip()
+        return _git_restore(repo_path, file_path or None)
+
+    elif action == "reset":
+        confirmed = str(parameters.get("confirmed", "")).lower()
+        if confirmed not in ("yes", "true", "1", "confirm"):
+            return "Confirmation required for git reset --hard, sir."
+        return _git_reset_hard(repo_path)
+
+    elif action == "clean":
+        confirmed = str(parameters.get("confirmed", "")).lower()
+        if confirmed not in ("yes", "true", "1", "confirm"):
+            return "Confirmation required for git clean, sir."
+        return _git_clean(repo_path)
+
+    elif action == "checkout":
+        confirmed = str(parameters.get("confirmed", "")).lower()
+        if confirmed not in ("yes", "true", "1", "confirm"):
+            return "Confirmation required for git checkout, sir."
+        return _git_checkout(repo_path, branch_name)
+
     else:
         return f"Unknown git_plugin action: {action}"
