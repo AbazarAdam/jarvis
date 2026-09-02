@@ -74,9 +74,18 @@ def _compare(items: list[str], aspect: str) -> str:
         "Give specific facts and data."
     )
     try:
-        return _gemini_search(query)
+        from core.model_router import ModelRouter
+        response = ModelRouter().generate(
+            prompt=query,
+            system="You are a research assistant. Provide factual comparisons.",
+            temperature=0.2,
+            max_tokens=1500,
+        )
+        if response.get("success"):
+            return response["text"].strip()
+        raise RuntimeError(response.get("error") or "ModelRouter failed")
     except Exception as e:
-        print(f"[WebSearch] ⚠️ Gemini compare failed: {e} — falling back to DDG")
+        print(f"[WebSearch] ⚠️ ModelRouter compare failed: {e} — falling back to DDG")
 
     # DDG fallback: fetch results per item and merge
     all_results: dict[str, list] = {}

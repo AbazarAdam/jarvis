@@ -19,8 +19,13 @@ PLUGIN_INFO = {
     "name": "person_osint",
     "description": (
         "Search for a person across public sources using OSINT techniques. "
-        "Provide a full name, username, email, or phone number. "
-        "Returns a summary of findings."
+        "Use this tool when the user asks to find information about a person, "
+        "do social engineering research, investigate an individual, or look up "
+        "someone by name, username, email, or phone number. "
+        "Examples: 'search for John Doe', 'find info on username johndoe', "
+        "'OSINT on email test@example.com', 'who is this phone number?'. "
+        "Provide at least one of: name, usernames, email, phone. "
+        "Returns a detailed report of findings."
     ),
     "parameters": {
         "type": "OBJECT",

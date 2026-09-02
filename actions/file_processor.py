@@ -37,6 +37,18 @@ def _get_api_key() -> str:
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
+def _ai_generate_text(prompt: str, max_tokens: int = 1500, temperature: float = 0.3) -> str:
+    """Unified text generation through ModelRouter with provider fallback."""
+    from core.model_router import ModelRouter
+
+    response = ModelRouter().generate(
+        prompt=prompt,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    if not response.get("success"):
+        raise RuntimeError(response.get("error") or "All AI providers failed")
+    return response["text"].strip()
 
 class _LegacyGenAI:
     """Small compatibility shim so existing file_processor code still works
@@ -295,9 +307,7 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
             "reformat":       f"Reformat this text cleanly with proper structure:\n\n{text}",
         }
         try:
-            model    = _gemini_client()
-            response = model.generate_content(prompt_map.get(action, f"Analyze:\n\n{text}"))
-            result   = response.text.strip()
+            result = _ai_generate_text(prompt_map.get(action, f"Analyze:\n\n{text}"))
             if len(result) > 600 and params.get("save", True):
                 out = _output_path(path, action, ".txt")
                 out.write_text(result, encoding="utf-8")
@@ -414,9 +424,7 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         instruction = action
 
     try:
-        model    = _gemini_client()
-        response = model.generate_content(prompt_map[action])
-        result   = response.text.strip()
+        result = _ai_generate_text(prompt_map[action])
         if len(result) > 600 and params.get("save", True):
             out = _output_path(path, action, ".txt")
             out.write_text(result, encoding="utf-8")
@@ -461,9 +469,7 @@ def _process_data(path: Path, file_type: str, action: str,
                    f"Rows: {len(df)}\nPreview:\n{preview}\n\n"
                    f"Give insights, patterns, and notable findings.")
         try:
-            model    = _gemini_client()
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            return _ai_generate_text(prompt)
         except Exception as e:
             return f"AI analysis failed: {e}"
 
@@ -515,11 +521,9 @@ def _process_data(path: Path, file_type: str, action: str,
 
     preview = df.head(30).to_string()
     try:
-        model    = _gemini_client()
-        response = model.generate_content(
+        return _ai_generate_text(
             f"Task: {action}\nDataset ({len(df)} rows, cols: {list(df.columns)}):\n{preview}"
         )
-        return response.text.strip()
     except Exception as e:
         return f"Processing failed: {e}"
 
@@ -546,9 +550,7 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
         if params.get("instruction"):
             prompt = f"{params['instruction']}\n\nJSON data:\n{preview}"
         try:
-            model    = _gemini_client()
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            return _ai_generate_text(prompt)
         except Exception as e:
             return f"AI processing failed: {e}"
 
@@ -610,9 +612,7 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
         prompt = prompt_map[action]
 
     try:
-        model    = _gemini_client()
-        response = model.generate_content(prompt)
-        result   = response.text.strip()
+        result = _ai_generate_text(prompt)
 
         if action in ("fix", "optimize", "document") and params.get("save", True):
             out = _output_path(path, action)
@@ -881,10 +881,8 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
             out.write_text(text, encoding="utf-8")
             return f"Text extracted. Saved: {out.name}"
         try:
-            model    = _gemini_client()
             prompt   = f"{'Summarize' if action == 'summarize' else 'Analyze'} this presentation:\n{text[:30000]}"
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            return _ai_generate_text(prompt)
         except Exception as e:
             return f"AI processing failed: {e}"
 
@@ -934,10 +932,8 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
     if file_type == "unknown":
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")[:10000]
-            model   = _gemini_client()
             prompt  = f"File: {path.name}\nContent preview:\n{content}\n\nTask: {action or instruction or 'Describe what this file contains and what can be done with it.'}"
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            return _ai_generate_text(prompt)
         except Exception as e:
             return f"Unknown file type ({path.suffix}). Could not process: {e}"
 

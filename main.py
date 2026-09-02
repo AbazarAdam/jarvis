@@ -797,10 +797,20 @@ class JarvisLive:
             self._loop
         )
 
+    def _speak_notification(self, text: str = ""):
+        """Play a clean beep tone for background task start/end."""
+        def _beep():
+            try:
+                import winsound
+                winsound.Beep(1000, 200)   # 1000 Hz, 200 ms
+            except Exception:
+                pass
+        threading.Thread(target=_beep, daemon=True).start()
+
     def _announce_local(self, text: str = ""):
-        """Speak the completion/failure message through JARVIS voice."""
+        """Speak the completion/failure message through local TTS."""
         if text:
-            self.speak(text)
+            self._speak_notification(text)
 
     def _start_background_tool(self, tool_name: str, args: dict, func) -> str:
         task_id = uuid.uuid4().hex[:8]
@@ -865,17 +875,17 @@ class JarvisLive:
         }
 
         if start_message:
-            self.speak(start_message)
+            self._speak_notification(start_message)
 
         def wrapper():
             try:
-                result = func(parameters=args, player=self.ui, speak=self.speak)
+                result = func(parameters=args, player=self.ui, speak=self._speak_notification)
                 task = self.background_tasks.get(task_id)
                 if task:
                     task["status"] = "completed"
                     task["result"] = result
 
-                self.speak(f"{tool_name} completed, sir.")
+                self._speak_notification(f"{tool_name} completed, sir.")
                 self.reflection.record(
                     goal=tool_name,
                     result=str(result)[:200],
@@ -890,7 +900,7 @@ class JarvisLive:
                     task["status"] = "failed"
                     task["result"] = str(e)
 
-                self.speak(f"{tool_name} failed, sir. {str(e)[:120]}")
+                self._speak_notification(f"{tool_name} failed, sir. {str(e)[:120]}")
                 self.reflection.record(
                     goal=tool_name,
                     result="",
@@ -1276,6 +1286,21 @@ class JarvisLive:
                     id=fc.id,
                     name=name,
                     response={"result": "Background task started. Do not speak until the user asks for status."},
+                )
+
+            if name == "person_osint":
+                from plugins.person_osint import execute as person_osint_execute
+
+                self._start_background_tool_with_speak(
+                    "person_osint",
+                    args,
+                    person_osint_execute,
+                    start_message="Starting OSINT investigation, sir. This will run in the background.",
+                )
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={"result": "Background OSINT started. I will notify you when complete."},
                 )
 
             # Plugin dispatch (all other plugins and quick security_tool_manager actions)
