@@ -1342,9 +1342,18 @@ class JarvisLive:
                 if not self.background_tasks:
                     result = "No background tasks running, sir."
                 else:
-                    lines = []
+                    # Keep only the latest task per tool name
+                    latest = {}
                     for task_id, info in self.background_tasks.items():
-                        tool   = info.get("tool", "unknown")
+                        tool = info.get("tool", "unknown")
+                        latest[tool] = info  # insertion order keeps last occurrence? Actually dict overwrites value but preserves original key order? No, order remains first insertion, but we want latest, so we can use a separate dict and update order by re-inserting.
+                        # To ensure latest order, we can delete and re-add:
+                        if tool in latest:
+                            del latest[tool]
+                        latest[tool] = info
+
+                    lines = []
+                    for tool, info in latest.items():
                         status = info.get("status", "running")
                         detail = info.get("result") or ""
 
@@ -1356,7 +1365,7 @@ class JarvisLive:
                             lines.append(f"{tool}: completed — {short}")
                         else:
                             lines.append(f"{tool}: running")
-                    result = "Background tasks:\n" + "\n".join(lines)
+                    result = "Background tasks (latest):\n" + "\n".join(lines)
 
             elif name == "screen_process":
                 threading.Thread(

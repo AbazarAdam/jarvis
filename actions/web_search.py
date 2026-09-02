@@ -129,30 +129,28 @@ def web_search(
     # This action requires internet/backends
     web_search.requires_internet = True
 
-    # Try the stable model router first, then fallback to DDG
-    try:
-        from core.model_router import ModelRouter
+    if mode == "compare":
+        return _compare(items, aspect)
 
+    # For normal search: try real search engine first
+    try:
+        results = _ddg_search(query, max_results=8)
+        if results:
+            formatted = _format_ddg(query, results)
+            print(f"[WebSearch] ✅ DDG: {len(results)} result(s).")
+            return formatted
+        # If no results, fall back to ModelRouter
+        print("[WebSearch] ⚠️ DDG returned no results; trying ModelRouter...")
+        from core.model_router import ModelRouter
         response = ModelRouter().generate(
             prompt=query,
             system="You are a web search assistant. Answer factually and concisely.",
             temperature=0.2,
             max_tokens=1200,
         )
-
         if response.get("success"):
-            result = response["text"].strip()
-            print("[WebSearch] ✅ ModelRouter OK.")
-            return result
-
+            return response["text"].strip()
         raise RuntimeError(response.get("error") or "ModelRouter failed")
     except Exception as e:
-        print(f"[WebSearch] ⚠️ ModelRouter failed ({e}) — trying DDG...")
-        try:
-            results = _ddg_search(query)
-            result  = _format_ddg(query, results)
-            print(f"[WebSearch] ✅ DDG: {len(results)} result(s).")
-            return result
-        except Exception as e2:
-            print(f"[WebSearch] ❌ All backends failed: {e2}")
-            return f"Search failed, sir: {e2}"
+        print(f"[WebSearch] ❌ Search failed: {e}")
+        return f"Search failed, sir: {e}"
