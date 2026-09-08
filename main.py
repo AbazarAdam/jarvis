@@ -1101,8 +1101,6 @@ class JarvisLive:
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            output_audio_transcription={},
-            input_audio_transcription={},
             system_instruction=combined,
             tools=[{"function_declarations": TOOL_DECLARATIONS + PLUGIN_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
@@ -1556,6 +1554,16 @@ class JarvisLive:
             traceback.print_exc()
             self.speak_error(name, e)
 
+            # Record structured failure outcome for learning
+            self.reflection.record(
+                goal=name,
+                result="",
+                outcome="failure",
+                error=str(e),
+                tool=name,
+            )
+            self._maybe_evaluate_task(name, args, "", "failure", error=str(e))
+
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
@@ -1812,18 +1820,6 @@ class JarvisLive:
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
-
-                    # Heartbeat: silent ping every 45s to prevent server-side timeout
-                    async def _heartbeat():
-                        while True:
-                            await asyncio.sleep(45)
-                            try:
-                                await session.send_client_content(
-                                    turns={"parts": [{"text": "."}], "turn_complete": True}
-                                )
-                            except Exception:
-                                break
-                    tg.create_task(_heartbeat())
 
                     # Prime the live session after STOP so voice works immediately
                     if self._was_hard_reset:
