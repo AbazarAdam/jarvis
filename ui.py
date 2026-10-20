@@ -1120,6 +1120,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self, face_path: str):
         super().__init__()
+        global _main_window_instance
+        _main_window_instance = self
         self.setWindowTitle("J.A.R.V.I.S — Just A Rather Very Intelligent System")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
@@ -1141,12 +1143,7 @@ class MainWindow(QMainWindow):
         central.setStyleSheet(f"background: {C.BG};")
         self.setCentralWidget(central)
 
-        self._cam_preview = QLabel(self)
-        self._cam_preview.hide()
-        self._cam_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cam_preview.setStyleSheet(f"background: {C.BG}; border: 2px solid {C.PRI}; border-radius: 8px;")
-        self._cam_preview.setFixedSize(400, 300)
-        self._cam_preview.setWindowFlags(Qt.WindowType.ToolTip)
+        # Camera preview is now docked inside the right panel (see _build_right_panel)
 
         root = QVBoxLayout(central)
         root.setContentsMargins(20, 16, 20, 16)
@@ -1169,7 +1166,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
-        self._camera_preview_signal.connect(self._show_camera_preview_dialog)
+        self._camera_preview_signal.connect(self._show_camera_frame)
         self._setup_sig.connect(self._update_setup_progress)
 
         self._stopwatch_show_signal.connect(self._show_stopwatch_window)
@@ -1338,6 +1335,50 @@ class MainWindow(QMainWindow):
 
         self._log = LogWidget()
         lay.addWidget(self._log, 1)
+
+        # Docked camera preview (hidden until frames arrive)
+        self._cam_dock = QWidget()
+        self._cam_dock.setFixedHeight(200)
+        self._cam_dock.setStyleSheet(
+            f"background: {C.PANEL2}; border: 1px solid {C.PRI_DIM}; border-radius: 8px;"
+        )
+        cd_lay = QVBoxLayout(self._cam_dock)
+        cd_lay.setContentsMargins(6, 6, 6, 6)
+        cd_lay.setSpacing(4)
+
+        cd_header = QHBoxLayout()
+        cd_header.setContentsMargins(0, 0, 0, 0)
+        cd_header.setSpacing(4)
+
+        cd_live = QLabel("● LIVE")
+        cd_live.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        cd_live.setStyleSheet(f"color: {C.RED}; background: transparent; border: none;")
+        cd_header.addWidget(cd_live)
+        cd_header.addStretch()
+
+        self._cam_close_btn = QPushButton("✕")
+        self._cam_close_btn.setFixedSize(20, 20)
+        self._cam_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cam_close_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: none; }}"
+            f"QPushButton:hover {{ color: {C.RED}; }}"
+        )
+        self._cam_close_btn.clicked.connect(self._hide_camera_dock)
+        cd_header.addWidget(self._cam_close_btn)
+        cd_lay.addLayout(cd_header)
+
+        self._cam_image = QLabel()
+        self._cam_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cam_image.setStyleSheet("background: transparent; border: none;")
+        cd_lay.addWidget(self._cam_image, 1)
+
+        self._cam_dock.hide()
+        lay.addWidget(self._cam_dock)
+
+        # Auto-hide timer (resets on every frame)
+        self._cam_hide_timer = QTimer(self)
+        self._cam_hide_timer.setSingleShot(True)
+        self._cam_hide_timer.timeout.connect(self._hide_camera_dock)
 
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
@@ -1515,17 +1556,33 @@ class MainWindow(QMainWindow):
     def show_camera_preview(self, image_bytes: bytes):
         self._camera_preview_signal.emit(image_bytes)
 
-    def _show_camera_preview_dialog(self, image_bytes: bytes):
+    def _show_camera_frame(self, image_bytes: bytes):
+        """Update the docked camera preview with a new frame."""
         try:
-            pixmap = QPixmap(); pixmap.loadFromData(image_bytes)
-            if pixmap.isNull(): return
-            self._cam_preview.setPixmap(pixmap.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            self._cam_preview.move(self.geometry().center() - self._cam_preview.rect().center())
-            self._cam_preview.show()
-            self._cam_preview.raise_()
-            QTimer.singleShot(4000, self._cam_preview.hide)
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+            if pixmap.isNull():
+                return
+            scaled = pixmap.scaled(
+                self._cam_dock.width() - 12,
+                self._cam_dock.height() - 36,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._cam_image.setPixmap(scaled)
+            self._cam_dock.show()
+            self._cam_hide_timer.start(6000)
         except Exception as e:
-            print(f"[UI] ⚠️ Camera preview error: {e}")
+            print(f"[UI] Camera frame error: {e}")
+
+    def _hide_camera_dock(self):
+        """Hide the docked camera preview."""
+        try:
+            self._cam_hide_timer.stop()
+            self._cam_image.clear()
+            self._cam_dock.hide()
+        except Exception:
+            pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
