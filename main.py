@@ -506,6 +506,24 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "autonomous_task",
+        "description": (
+            "Plan and execute a multi-step goal autonomously. "
+            "The planner breaks the goal into steps, executes each, and reports outcomes. "
+            "Use ONLY when the goal needs 2+ chained tool calls "
+            "(e.g. 'research X then save the summary to desktop'). "
+            "DO NOT use for single actions — use the specific tool directly."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "goal":      {"type": "STRING",  "description": "Complete description of the goal"},
+                "max_steps": {"type": "INTEGER", "description": "Max steps (default 10, cap 15)"}
+            },
+            "required": ["goal"]
+        }
+    },
+    {
         "name": "computer_control",
         "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
         "parameters": {
@@ -1486,6 +1504,54 @@ class JarvisLive:
                 return types.FunctionResponse(
                     id=fc.id, name=name,
                     response={"result": "ok", "silent": True}
+                )
+
+            elif name == "autonomous_task":
+                from core.autonomous import execute_workflow
+
+                registry = {
+                    "web_search":       lambda p: web_search_action(parameters=p, player=self.ui),
+                    "file_controller":  lambda p: file_controller(parameters=p, player=self.ui),
+                    "file_processor":   lambda p: file_processor(parameters=p, player=self.ui, speak=self._speak_notification),
+                    "computer_control": lambda p: computer_control(parameters=p, player=self.ui),
+                    "browser_control":  lambda p: browser_control(parameters=p, player=self.ui),
+                    "open_app":         lambda p: open_app(parameters=p, response=None, player=self.ui),
+                    "reminder":         lambda p: reminder(parameters=p, response=None, player=self.ui),
+                    "desktop_control":  lambda p: desktop_control(parameters=p, player=self.ui),
+                    "code_helper":      lambda p: code_helper(parameters=p, player=self.ui, speak=self._speak_notification),
+                }
+                for plugin_name in ("tell_time", "news", "morning_brief"):
+                    if plugin_name in PLUGIN_FUNCTIONS:
+                        registry[plugin_name] = (
+                            lambda p, _n=plugin_name: PLUGIN_FUNCTIONS[_n](
+                                parameters=p, player=self.ui, speak=None
+                            )
+                        )
+
+                goal = str(args.get("goal", "")).strip()
+                try:
+                    max_steps = min(int(args.get("max_steps", 10)), 15)
+                except (TypeError, ValueError):
+                    max_steps = 10
+
+                def _run_autonomous(parameters, player=None, speak=None):
+                    return execute_workflow(
+                        goal=goal,
+                        tool_registry=registry,
+                        speak=self._speak_notification,
+                        stop_event=self._stop_background_event,
+                        max_steps=max_steps,
+                    )
+
+                self._start_background_tool_with_speak(
+                    "autonomous_task",
+                    args,
+                    _run_autonomous,
+                    start_message="Autonomous task started in background, sir.",
+                )
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "Autonomous task started. Do not speak until user asks for status."},
                 )
 
             elif name == "self_heal":
