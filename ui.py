@@ -1023,6 +1023,17 @@ class MainWindow(QMainWindow):
     _stopwatch_show_signal = pyqtSignal(object)   # callback function from plugin
     _stopwatch_update_signal = pyqtSignal(float, bool)
     _stopwatch_close_signal = pyqtSignal()
+    _bg_count_signal = pyqtSignal(int)
+
+    def _set_bg_count(self, n: int):
+        try:
+            if n > 0:
+                self._bg_badge.setText(f"⚙  {n} task{'s' if n != 1 else ''} running")
+                self._bg_badge.show()
+            else:
+                self._bg_badge.hide()
+        except Exception:
+            pass
 
     def _show_stopwatch_window(self, callback):
         if not hasattr(self, '_stopwatch_window') or self._stopwatch_window is None:
@@ -1147,6 +1158,7 @@ class MainWindow(QMainWindow):
         self._stopwatch_show_signal.connect(self._show_stopwatch_window)
         self._stopwatch_update_signal.connect(self._update_stopwatch_window)
         self._stopwatch_close_signal.connect(self._close_stopwatch_window)
+        self._bg_count_signal.connect(self._set_bg_count)
 
         self._overlay = None
         self._ready = self._check_config()
@@ -1187,6 +1199,17 @@ class MainWindow(QMainWindow):
         lay.addStretch(1)
         lay.addLayout(title_col, 0)
         lay.addStretch(1)
+
+        # Background task badge (hidden when idle)
+        self._bg_badge = QLabel("")
+        self._bg_badge.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
+        self._bg_badge.setStyleSheet(
+            f"color: {C.PRI}; background: {C.PANEL2}; "
+            f"border: 1px solid {C.PRI_DIM}; border-radius: 10px; "
+            f"padding: 3px 10px;"
+        )
+        self._bg_badge.hide()
+        lay.addWidget(self._bg_badge, 0)
 
         # Clock / date on right
         self._clock_lbl = QLabel("00:00:00")
@@ -1659,6 +1682,12 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def set_background_count(self, n: int):
+        try:
+            self._win._bg_count_signal.emit(int(n))
+        except Exception:
+            pass
 
     def show_stopwatch(self, callback):
         self._win._stopwatch_show_signal.emit(callback)

@@ -895,6 +895,8 @@ class JarvisLive:
         if start_message:
             self._speak_notification(start_message)
 
+        self._notify_bg_count()
+
         def wrapper():
             try:
                 result = func(parameters=args, player=self.ui, speak=self._speak_notification)
@@ -930,10 +932,23 @@ class JarvisLive:
                 from core.audit import log_action
                 log_action(tool_name, args, result=str(e), status="failed")
 
+            finally:
+                self._notify_bg_count()
+
         thread = threading.Thread(target=wrapper, daemon=True)
         self._background_threads[task_id] = thread
         thread.start()
         return task_id
+
+    def _notify_bg_count(self):
+        try:
+            n = sum(
+                1 for t in self.background_tasks.values()
+                if t.get("status") == "running"
+            )
+            self.ui.set_background_count(n)
+        except Exception:
+            pass
 
     def cancel_all_background_tasks(self):
         """Signal all background tasks to stop without corrupting active threads."""
