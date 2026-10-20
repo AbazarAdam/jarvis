@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget, QDialog, QProgressBar, QGraphicsDropShadowEffect,
+    QMenu,
 )
 
 _main_window_instance: 'MainWindow' | None = None
@@ -204,6 +205,20 @@ class CommandInput(QTextEdit):
             self.insertPlainText(text)
             event.accept()
             return
+
+        # Up arrow on empty input: recall the last command
+        if (event.key() == Qt.Key.Key_Up and
+            not event.modifiers() and
+            not self.toPlainText().strip()):
+            win = self.window()
+            history = getattr(win, "_command_history", None)
+            if history:
+                self.setPlainText(history[-1])
+                cursor = self.textCursor()
+                cursor.movePosition(cursor.MoveOperation.End)
+                self.setTextCursor(cursor)
+                event.accept()
+                return
 
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -1116,6 +1131,8 @@ class MainWindow(QMainWindow):
         self._remote_active = False
         self.on_text_command = None
         self._muted = False
+        self._command_history: list[str] = []
+        self._command_history_max = 10
         self._current_file = None
         self._interrupt_flag = threading.Event()
         self._hard_reset_callback = None
@@ -1359,6 +1376,18 @@ class MainWindow(QMainWindow):
         self._input.submitted.connect(self._send)
         lay.addWidget(self._input, 1)
 
+        self._history_btn = QPushButton("▾")
+        self._history_btn.setFixedSize(20, 34)
+        self._history_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self._history_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._history_btn.setToolTip("Command history")
+        self._history_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 6px; }}
+            QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.BORDER_B}; }}
+        """)
+        self._history_btn.clicked.connect(self._show_history_menu)
+        lay.addWidget(self._history_btn)
+
         send = QPushButton("▸")
         send.setFixedSize(34, 34)
         send.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
@@ -1570,9 +1599,54 @@ class MainWindow(QMainWindow):
         txt = self._input.toPlainText().strip()
         if not txt: return
         self._input.clear()
+        self._push_history(txt)
         self._log.append_log(f"You: {txt}")
         if self.on_text_command:
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
+
+    def _push_history(self, text: str):
+        """Add a command to history, de-duplicate against last entry."""
+        try:
+            if not text:
+                return
+            if self._command_history and self._command_history[-1] == text:
+                return
+            self._command_history.append(text)
+            if len(self._command_history) > self._command_history_max:
+                self._command_history = self._command_history[-self._command_history_max:]
+        except Exception:
+            pass
+
+    def _show_history_menu(self):
+        """Open a dropdown of recent commands."""
+        try:
+            if not self._command_history:
+                m = QMenu(self)
+                m.addAction("(no history yet)").setEnabled(False)
+                m.exec(self._history_btn.mapToGlobal(self._history_btn.rect().bottomLeft()))
+                return
+
+            m = QMenu(self)
+            m.setStyleSheet(f"""
+                QMenu {{ background: {C.PANEL2}; color: {C.TEXT}; border: 1px solid {C.BORDER_B}; border-radius: 6px; padding: 4px; }}
+                QMenu::item {{ padding: 6px 12px; border-radius: 4px; }}
+                QMenu::item:selected {{ background: {C.PRI_GHO}; color: {C.PRI}; }}
+            """)
+            for cmd in reversed(self._command_history):
+                label = cmd if len(cmd) <= 60 else cmd[:57] + "..."
+                action = m.addAction(label)
+                action.setData(cmd)
+            chosen = m.exec(self._history_btn.mapToGlobal(self._history_btn.rect().topRight()))
+            if chosen:
+                cmd = chosen.data()
+                if cmd:
+                    self._input.setPlainText(cmd)
+                    cursor = self._input.textCursor()
+                    cursor.movePosition(cursor.MoveOperation.End)
+                    self._input.setTextCursor(cursor)
+                    self._input.setFocus()
+        except Exception as e:
+            print(f"[UI] History menu error: {e}")
 
     def _apply_state(self, state: str):
         self.hud.state = state
