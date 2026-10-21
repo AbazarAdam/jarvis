@@ -66,7 +66,7 @@ def _web_search(query: str, player=None) -> str:
 
 
 def _ddg_search_raw(query: str, max_results: int = 8) -> list[dict]:
-    """Direct DuckDuckGo search for more control. Never raises."""
+    """Direct DDG search. Never raises. Returns [] on failure."""
     try:
         from ddgs import DDGS
     except ImportError:
@@ -80,14 +80,25 @@ def _ddg_search_raw(query: str, max_results: int = 8) -> list[dict]:
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=max_results):
                 results.append({
-                    "title": r.get("title", ""),
+                    "title":   r.get("title", ""),
                     "snippet": r.get("body", ""),
-                    "url": r.get("href", ""),
+                    "url":     r.get("href", ""),
                 })
         return results
     except Exception as e:
         print(f"[OSINT] DDG raw failed: {e}")
         return []
+
+
+def _search_with_fallback(query: str, max_results: int = 5, player=None) -> str:
+    """Return formatted search text. Raw DDG first, then web_search_action fallback."""
+    raw = _ddg_search_raw(query, max_results=max_results)
+    if raw:
+        return "\n".join(
+            f"{r['title']}\n{r['snippet']}\n{r['url']}".strip()
+            for r in raw if r.get("title") or r.get("snippet")
+        )
+    return _web_search(query, player=player)
 
 
 def _generate_usernames(full_name: str) -> list[str]:
@@ -147,8 +158,13 @@ def _check_social_media(username: str) -> list[dict]:
     return found
 
 
+SHERLOCK_ENABLED = False  # Disabled: ~30s per username, rarely returns results
+
+
 def _run_sherlock(username: str) -> str:
-    """Run Sherlock for username enumeration."""
+    """Sherlock username enumeration (disabled by default — too slow)."""
+    if not SHERLOCK_ENABLED:
+        return None
     if shutil.which("sherlock") is None:
         return None
     try:
@@ -234,7 +250,7 @@ def _generate_report(results: dict) -> str:
         lines.append(f"\n🌐 SOCIAL MEDIA PROFILE CHECKS")
         for profile in results["social_media"]:
             status = profile.get("status", "")
-            if "likely exists" in status:
+            if "exists" in status:
                 lines.append(f"  ✅ {profile['platform']}: {profile['url']}")
             elif "not found" in status:
                 lines.append(f"  ❌ {profile['platform']}: not found")
@@ -271,26 +287,28 @@ def execute(parameters: dict, player=None, speak=None) -> str:
 
     results = {}
 
-    # 1. Name search with direct DDG queries
+    # 1. Name search — fewer, smarter queries with fallback
     if name:
-        queries = [f'"{name}"']
+        import time as _time
+
+        # Unquoted queries match partial names better than strict quoted searches.
+        queries = [name]
         if location:
-            queries.append(f'"{name}" {location}')
+            queries.append(f"{name} {location}")
         if org:
-            queries.append(f'"{name}" {org}')
-        queries.append(f'"{name}" LinkedIn')
-        queries.append(f'"{name}" Facebook')
-        queries.append(f'"{name}" Instagram')
-        queries.append(f'"{name}" university OR college OR education')
-        queries.append(f'"{name}" work OR job OR company')
-        # Also add raw queries with DDG formatting
+            queries.append(f"{name} {org}")
+        queries.append(f"{name} LinkedIn")
+        queries.append(f"{name} GitHub")
+
         query_results = []
-        for q in queries:
-            raw = _ddg_search_raw(q, max_results=5)
-            if raw:
-                query_results.append(f"### {q}\n" + "\n".join([f"{r['title']}\n{r['snippet']}\n{r['url']}" for r in raw]))
+        for idx, q in enumerate(queries):
+            if idx > 0:
+                _time.sleep(0.6)  # rate-limit hygiene
+            text = _search_with_fallback(q, max_results=4, player=player)
+            if text and text.strip():
+                query_results.append(f"### {q}\n{text}")
             else:
-                query_results.append(f"### {q}\nNo results from DDG.")
+                query_results.append(f"### {q}\nNo results.")
         results["name_search"] = "\n\n".join(query_results)
 
     # 2. Username enumeration (provided or generated from name)
@@ -302,10 +320,12 @@ def execute(parameters: dict, player=None, speak=None) -> str:
         candidates = []
 
     if candidates:
+        import time as _time
         username_report = []
         all_social = []
         sherlock_reports = []
-        for uname in candidates[:8]:  # limit to avoid too many requests
+        for uname in candidates[:4]:  # limit to reduce rate-limit pressure
+            _time.sleep(0.5)
             # Social media check
             social = _check_social_media(uname)
             for s in social:
@@ -318,7 +338,15 @@ def execute(parameters: dict, player=None, speak=None) -> str:
             # Also search username on DDG
             username_report.append(f"Username '{uname}':\n" + _web_search(f'"{uname}"', player))
 
-        results["social_media"] = all_social
+        seen_social_keys = set()
+        deduped_social = []
+        for entry in all_social:
+            key = (entry.get("platform", ""), entry.get("url", ""))
+            if key in seen_social_keys:
+                continue
+            seen_social_keys.add(key)
+            deduped_social.append(entry)
+        results["social_media"] = deduped_social
         if username_report:
             results["username_results"] = "\n\n".join(username_report)
         if sherlock_reports:

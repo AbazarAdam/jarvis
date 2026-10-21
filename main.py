@@ -1389,10 +1389,10 @@ class JarvisLive:
                         detail = info.get("result") or ""
 
                         if status == "failed":
-                            short = detail[:300] if detail else "Unknown error"
+                            short = detail[:1500] if detail else "Unknown error"
                             lines.append(f"{tool}: FAILED — {short}")
                         elif status == "completed":
-                            short = detail[:300] if detail else "Done"
+                            short = detail[:2500] if detail else "Done"
                             lines.append(f"{tool}: completed — {short}")
                         else:
                             lines.append(f"{tool}: running")
